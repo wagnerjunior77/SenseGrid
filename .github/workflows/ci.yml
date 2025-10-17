@@ -1,0 +1,28 @@
+﻿name: build
+on: [push, pull_request]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fw:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (ESP-IDF v5.5, target esp32s3)
+        run: |
+          idf.py --version
+          idf.py set-target esp32s3
+          idf.py defconfig
+          idf.py build
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.sha }}
+          path: |
+            build/*.bin
+            build/*.elf
+            build/*.map
+            build/flasher_args.json
