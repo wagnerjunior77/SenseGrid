@@ -15,7 +15,7 @@ jobs:
         run: |
           idf.py --version
           idf.py set-target esp32s3
-          idf.py defconfig
+          rm -f sdkconfig
           idf.py build
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
