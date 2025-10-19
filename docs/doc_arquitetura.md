@@ -68,7 +68,7 @@ Solução de detecção e contagem de ocupação usando radar 24 GHz (ME73MS01) 
 
 ## 4. Arquitetura de Alto Nível
 
-![Arquitetura de alto nível](images/arquitetura_v1.png)
+Link: https://tinyurl.com/mr2y4c6x
 
 *Ideia central:* o **Core** nunca depende de bibliotecas externas; ele “vê” apenas **interfaces**. **Drivers** e **Adapters** plugam do lado de fora. (DIP do SOLID.)
 
