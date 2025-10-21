@@ -1,4 +1,5 @@
 ﻿name: build
+
 on: [push, pull_request]
 
 concurrency:
@@ -8,15 +9,21 @@ concurrency:
 jobs:
   fw:
     runs-on: ubuntu-latest
-    container: espressif/idf:release-v5.5
+    container:
+      image: espressif/idf:release-v5.5.1   # fixa a tag; pode usar release-v5.5 também
     steps:
       - uses: actions/checkout@v4
-      - name: Build (ESP-IDF v5.5, target esp32s3)
+
+      - name: Build (ESP-IDF v5.5.1, target esp32s3)
+        shell: bash
         run: |
+          set -euo pipefail
+          . /opt/esp/idf/export.sh        # <— habilita idf.py no PATH
           idf.py --version
           idf.py set-target esp32s3
-          rm -f sdkconfig
+          rm -f sdkconfig                 # garante uso do sdkconfig.defaults
           idf.py build
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -26,3 +33,5 @@ jobs:
             build/*.elf
             build/*.map
             build/flasher_args.json
+            build/bootloader/*.bin
+            build/partition_table/*.bin
