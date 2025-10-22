@@ -24,3 +24,5 @@ toolchain/**
 !toolchain/README.md
 !toolchain/.keep
 !toolchain/versions.json
+
+instructions.md

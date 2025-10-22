@@ -2,25 +2,97 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "SenseGrid: Bootstrap toolchain (local)",
+      "label": "Arduino (portable): Bootstrap CLI (1x)",
+      "detail": "Baixa o arduino-cli.exe em toolchain/",
       "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
       "command": "powershell",
       "args": [
-        "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", "${workspaceFolder}/scripts/bootstrap.ps1"
+        "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}\\toolchain\\get-arduino-cli.ps1"
       ],
       "problemMatcher": []
     },
     {
-      "label": "SenseGrid: Build (local IDF)",
+      "label": "Arduino (portable): Install Core (1x ou quando trocar versão)",
+      "detail": "Instala esp32:esp32@versão especificada",
       "type": "shell",
-      "options": {
-        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] },
-        "cwd": "${workspaceFolder}"
-      },
-      "command": "${workspaceFolder}\\scripts\\build.cmd",
-      "problemMatcher": ["$gcc"],
-      "dependsOn": ["SenseGrid: Bootstrap toolchain (local)"]
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+      "args": [
+        "core", "install", "esp32:esp32@${config:sensegrid.coreVersion}",
+        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
+      ],
+      "problemMatcher": [],
+      "dependsOn": ["Arduino (portable): Bootstrap CLI (1x)"]
+    },
+    {
+  "label": "Arduino (portable): Build + Export (bin/elf)",
+  "type": "shell",
+  "options": { "cwd": "${workspaceFolder}" },
+  "command": "powershell",
+  "args": [
+    "-NoProfile","-ExecutionPolicy","Bypass",
+    "-File","${workspaceFolder}\\toolchain\\build-arduino.ps1",
+    "-SketchPath","${workspaceFolder}\\sketch\\SenseGrid",
+    "-YamlPath","${workspaceFolder}\\toolchain\\arduino-cli.yaml",
+    "-CliPath","${workspaceFolder}\\toolchain\\arduino-cli.exe",
+    "-Fqbn","${config:sensegrid.fqbn}",
+    "-BuildPath","${workspaceFolder}\\toolchain\\build\\SenseGrid",
+    "-ExportBinaries"
+  ],
+  "problemMatcher": ["$gcc"],
+  "dependsOn": ["Arduino (portable): Bootstrap CLI + Core (1x)"],
+  "group": { "kind": "build", "isDefault": true }
+}
+
+
+
+,
+    {
+      "label": "Arduino (portable): Upload",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+      "args": [
+        "upload",
+        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
+        "--fqbn", "${config:sensegrid.fqbn}",
+        "-p", "${config:sensegrid.serialPort}",
+        "${workspaceFolder}\\sketch\\SenseGrid"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Arduino (portable): Monitor",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+      "args": [
+        "monitor",
+        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
+        "-p", "${config:sensegrid.serialPort}",
+        "-c", "baudrate=115200"
+      ],
+      "problemMatcher": []
+    },
+
+    // ---- Opcional: blocos IDF “legado” lado a lado (placeholders) ----
+    {
+      "label": "ESP-IDF (legacy): Build",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "echo",
+      "args": ["IDF build desativado aqui (usar Arduino portable)"],
+      "problemMatcher": []
+    },
+    {
+      "label": "ESP-IDF (legacy): Flash",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "echo",
+      "args": ["IDF flash desativado aqui (usar Arduino portable)"],
+      "problemMatcher": []
     }
   ]
 }
