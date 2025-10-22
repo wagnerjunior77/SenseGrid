@@ -1,100 +1,101 @@
-<#  SenseGrid bootstrap (Windows)
-    - detecta Python sem quebrar
-    - instala Python se faltar (winget/choco)
-    - cria venv em toolchain\.venv
-    - clona esp-idf v5.5.1 em toolchain\esp-idf
-    - instala toolchains e deps
-#>
-
-param([string]$IdfTag = "v5.5.1")
+#Requires -Version 5.1
+Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Get-Python {
-  # tenta localizar um executavel de Python sem gerar erro
-  if (Get-Command py -ErrorAction SilentlyContinue)      { return @{Exe="py";      Pre=@("-3")} }
-  if (Get-Command python3 -ErrorAction SilentlyContinue) { return @{Exe="python3"; Pre=@()}   }
-  if (Get-Command python -ErrorAction SilentlyContinue)  { return @{Exe="python";  Pre=@()}   }
-  return @{Exe=$null; Pre=@()}
+function Run([string]$exe, [string[]]$argv) {
+  $pretty = ($exe + " " + ($argv -join " ")).Trim()
+  Write-Host ">>> $pretty"
+
+  # guardar ambiente atual
+  $prevPath = $env:PATH
+  $prevCI = $env:CI; $prevGA = $env:GITHUB_ACTIONS; $prevMSYS = $env:MSYSTEM
+  try {
+    # limpar variáveis que bagunçam subprocessos
+    foreach ($k in @("CI","GITHUB_ACTIONS","MSYSTEM")) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
+
+    # PATH sem MSYS2 e sem Git\usr\bin (evita python/ninja “alternativos”)
+    $env:PATH = ($env:PATH -split ";" | Where-Object {
+      $_ -and ($_ -notmatch "\\msys64\\") -and ($_ -notmatch "Git\\usr\\bin")
+    }) -join ";"
+
+    & $exe @argv
+    $code = $LASTEXITCODE
+    if ($code -ne 0) { throw "Falha ao executar: $pretty (exit $code)" }
+  }
+  finally {
+    # restaurar ambiente
+    $env:PATH = $prevPath
+    if ($null -ne $prevCI)   { $env:CI = $prevCI }            else { Remove-Item Env:CI -ErrorAction SilentlyContinue }
+    if ($null -ne $prevGA)   { $env:GITHUB_ACTIONS = $prevGA } else { Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+    if ($null -ne $prevMSYS) { $env:MSYSTEM = $prevMSYS }      else { Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue }
+  }
+  $true
 }
 
-function Install-Python {
-  Write-Host ">>> Python nao encontrado. Tentando instalar..."
-  if (Get-Command winget -ErrorAction SilentlyContinue) {
-    winget install -e --id Python.Python.3.11 --silent `
-      --accept-source-agreements --accept-package-agreements
-    return
+# --- checagens básicas ---
+Run "git" @("--version")
+
+function Resolve-Python311 {
+  $candidates = @("py","python3","python")
+  foreach ($c in $candidates) {
+    try {
+      $ver = & $c --version 2>$null
+      if ($LASTEXITCODE -eq 0 -and $ver -match "Python 3\.11") {
+        return (Get-Command $c -ErrorAction Stop).Source
+      }
+    } catch {}
   }
-  if (Get-Command choco -ErrorAction SilentlyContinue) {
-    choco install python --version=3.11.9 -y
-    return
-  }
-  throw "Python nao encontrado e nao foi possivel instalar automaticamente (sem winget/choco). Instale manualmente Python 3.10+ e rode novamente."
+  $default = "$env:LocalAppData\Programs\Python\Python311\python.exe"
+  if (Test-Path $default) { return $default }
+  return $null
 }
 
-function Ensure-Git {
-  if (Get-Command git -ErrorAction SilentlyContinue) { return }
-  Write-Host ">>> Git nao encontrado. Instalando..."
-  if (Get-Command winget -ErrorAction SilentlyContinue) {
-    winget install -e --id Git.Git --silent `
-      --accept-source-agreements --accept-package-agreements
-    return
-  }
-  if (Get-Command choco -ErrorAction SilentlyContinue) {
-    choco install git -y
-    return
-  }
-  throw "Git nao encontrado e sem instalador automatico. Instale o Git e rode de novo."
+$pyExe = Resolve-Python311
+if (-not $pyExe) {
+  Write-Host "Python 3.11 nao encontrado."
+  Write-Host "Instale: https://www.python.org/downloads/release/python-3119/ (marque Add to PATH) e rode novamente."
+  throw "Python 3.11 ausente"
 }
+Write-Host ">>> Usando Python: $pyExe"
 
-# --- paths
-$Root         = (Resolve-Path -LiteralPath "$PSScriptRoot\..").Path
-$ToolchainDir = Join-Path $Root "toolchain"
+# --- caminhos do projeto/toolchain ---
+$RepoRoot     = (Resolve-Path "$PSScriptRoot\..").Path
+$ToolchainDir = Join-Path $RepoRoot "toolchain"
 $VenvDir      = Join-Path $ToolchainDir ".venv"
 $IdfDir       = Join-Path $ToolchainDir "esp-idf"
+
 New-Item -ItemType Directory -Force -Path $ToolchainDir | Out-Null
 
-# --- Python
-$py = Get-Python
-if (-not $py.Exe) {
-  Install-Python
-  $py = Get-Python
-  if (-not $py.Exe) { throw "Python ainda indisponivel apos instalacao." }
-}
-Write-Host ">>> Usando Python: $($py.Exe) $($py.Pre -join ' ')"
-
-# helper pra chamar python com prefixo (py -3 ...)
-function Invoke-Py { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
-  & $py.Exe @($py.Pre) @Args
-}
-
-# garante pip/venv
-Invoke-Py -m ensurepip --upgrade | Out-Null
-Invoke-Py -m pip install --upgrade pip virtualenv | Out-Null
-
-if (-not (Test-Path $VenvDir)) {
+# --- venv ---
+if (-not (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) {
   Write-Host ">>> Criando venv em $VenvDir"
-  Invoke-Py -m venv $VenvDir
+  Run $pyExe @("-m","venv","$VenvDir")
+}
+$Vpy = (Join-Path $VenvDir "Scripts\python.exe")
+Run $Vpy @("-m","pip","install","--upgrade","pip","setuptools","wheel")
+
+# --- ESP-IDF v5.5.1: clone (se faltar) ---
+if (-not (Test-Path (Join-Path $IdfDir "tools\idf_tools.py"))) {
+  Write-Host ">>> Clonando esp-idf (v5.5.1) em $IdfDir"
+  Run "git" @("clone","--depth","1","--branch","v5.5.1","https://github.com/espressif/esp-idf.git","$IdfDir")
+} else {
+  Write-Host ">>> esp-idf ja existe: $IdfDir"
 }
 
-$Vpy  = Join-Path $VenvDir "Scripts\python.exe"
+# agora já existe; podemos apontar para as ferramentas do IDF
+$IdfTools = Join-Path $IdfDir "tools\idf_tools.py"
 
-# --- Git e ESP-IDF
-Ensure-Git
-if (-not (Test-Path $IdfDir)) {
-  Write-Host ">>> Clonando esp-idf ($IdfTag) em $IdfDir"
-  git clone --depth 1 --branch $IdfTag https://github.com/espressif/esp-idf.git $IdfDir
-}
+# --- requirements mínimos (core) ---
+$ReqCore = Join-Path $IdfDir "tools\requirements\requirements.core.txt"
+Run $Vpy @("-m","pip","install","--upgrade","-r","$ReqCore")
 
-Write-Host ">>> Instalando requirements do esp-idf"
-& $Vpy -m pip install --upgrade -r (Join-Path $IdfDir "requirements.txt")
+# --- mirrors e ambiente do IDF ---
+$env:IDF_PATH = $IdfDir
+# sem "https://": o idf_tools assume https e aceita mirror da Espressif
+$env:IDF_GITHUB_ASSETS = "dl.espressif.com/github_assets"
 
-Write-Host ">>> Instalando toolchains (idf_tools.py) — pode demorar"
-& $Vpy (Join-Path $IdfDir "tools\idf_tools.py") --non-interactive install required
+# --- instalar toolchains com o idf_tools.py ---
+Run $Vpy @("$IdfTools","--non-interactive","install","--targets","esp32s3")
 
-# --- smoke test do idf.py
-$export = ". `"$IdfDir\export.ps1`""
-Write-Host ">>> Testando idf.py --version"
-powershell -NoProfile -Command "$export; idf.py --version"
-
-Write-Host "`nOK! Ambiente pronto."
-Write-Host "Proximo passo: Tasks → SenseGrid: Build (local toolchain)"
+Write-Host ">>> PRONTO."
+Write-Host ">>> Proximo passo: Tasks -> SenseGrid: Build (local IDF)"

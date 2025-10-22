@@ -2,30 +2,77 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "SenseGrid: Bootstrap toolchain (first run)",
+      "label": "SenseGrid: Bootstrap toolchain (local)",
       "type": "shell",
-      "windows": { "command": "powershell", "args": ["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File","scripts/bootstrap.ps1"] },
-      "linux":   { "command": "bash", "args": ["scripts/bootstrap.sh"] },
-      "osx":     { "command": "bash", "args": ["scripts/bootstrap.sh"] }
+      "command": "powershell",
+      "args": [
+        "-NoLogo",
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "${workspaceFolder}/scripts/bootstrap.ps1"
+      ],
+      "problemMatcher": []
     },
+
     {
-      "label": "SenseGrid: Build (local toolchain)",
+      "label": "SenseGrid: Build (local IDF)",
       "type": "shell",
-      "windows": { "command": "powershell", "args": ["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File","scripts/build.ps1"] },
-      "linux":   { "command": "bash", "args": ["scripts/build.sh"] },
-      "osx":     { "command": "bash", "args": ["scripts/build.sh"] },
-      "problemMatcher": "$gcc"
+      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" set-target esp32s3 && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" build",
+      "options": {
+        "shell": {
+          "executable": "C:\\Windows\\System32\\cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "problemMatcher": ["$gcc"],
+      "dependsOn": ["SenseGrid: Bootstrap toolchain (local)"]
     },
+
     {
-      "label": "SenseGrid: Build + Flash",
+      "label": "SenseGrid: Clean",
       "type": "shell",
-      "windows": { "command": "powershell", "args": ["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File","scripts/flash.ps1","-Port","${input:serialPort}","-Baud","${input:baud}"] },
-      "linux":   { "command": "bash", "args": ["scripts/flash.sh","${input:serialPort}","${input:baud}"] },
-      "osx":     { "command": "bash", "args": ["scripts/flash.sh","${input:serialPort}","${input:baud}"] }
+      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" fullclean",
+      "options": {
+        "shell": {
+          "executable": "C:\\Windows\\System32\\cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "problemMatcher": []
+    },
+
+    {
+      "label": "SenseGrid: Flash",
+      "type": "shell",
+      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" -p ${input:comPort} flash",
+      "options": {
+        "shell": {
+          "executable": "C:\\Windows\\System32\\cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "problemMatcher": []
+    },
+
+    {
+      "label": "SenseGrid: Monitor",
+      "type": "shell",
+      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" -p ${input:comPort} monitor",
+      "options": {
+        "shell": {
+          "executable": "C:\\Windows\\System32\\cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "problemMatcher": []
     }
   ],
   "inputs": [
-    { "id": "serialPort", "type": "promptString", "description": "Serial (ex.: COM5, /dev/ttyUSB0)", "default": "COM5" },
-    { "id": "baud", "type": "pickString", "description": "Baudrate", "options": ["460800","921600","115200"], "default": "460800" }
+    {
+      "id": "comPort",
+      "type": "promptString",
+      "description": "Porta serial (ex.: COM3)",
+      "default": "COM3"
+    }
   ]
 }
