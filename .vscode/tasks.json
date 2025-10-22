@@ -6,73 +6,21 @@
       "type": "shell",
       "command": "powershell",
       "args": [
-        "-NoLogo",
-        "-NoProfile",
-        "-ExecutionPolicy", "Bypass",
+        "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", "${workspaceFolder}/scripts/bootstrap.ps1"
       ],
       "problemMatcher": []
     },
-
     {
       "label": "SenseGrid: Build (local IDF)",
       "type": "shell",
-      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" set-target esp32s3 && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" build",
       "options": {
-        "shell": {
-          "executable": "C:\\Windows\\System32\\cmd.exe",
-          "args": ["/d", "/c"]
-        }
+        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] },
+        "cwd": "${workspaceFolder}"
       },
+      "command": "${workspaceFolder}\\scripts\\build.cmd",
       "problemMatcher": ["$gcc"],
       "dependsOn": ["SenseGrid: Bootstrap toolchain (local)"]
-    },
-
-    {
-      "label": "SenseGrid: Clean",
-      "type": "shell",
-      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" fullclean",
-      "options": {
-        "shell": {
-          "executable": "C:\\Windows\\System32\\cmd.exe",
-          "args": ["/d", "/c"]
-        }
-      },
-      "problemMatcher": []
-    },
-
-    {
-      "label": "SenseGrid: Flash",
-      "type": "shell",
-      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" -p ${input:comPort} flash",
-      "options": {
-        "shell": {
-          "executable": "C:\\Windows\\System32\\cmd.exe",
-          "args": ["/d", "/c"]
-        }
-      },
-      "problemMatcher": []
-    },
-
-    {
-      "label": "SenseGrid: Monitor",
-      "type": "shell",
-      "command": "set \"IDF_PATH=${workspaceFolder}\\toolchain\\esp-idf\" && set \"IDF_PYTHON_ENV_PATH=${workspaceFolder}\\toolchain\\.venv\" && call \"%IDF_PATH%\\export.bat\" && \"%IDF_PYTHON_ENV_PATH%\\Scripts\\python.exe\" \"%IDF_PATH%\\tools\\idf.py\" -p ${input:comPort} monitor",
-      "options": {
-        "shell": {
-          "executable": "C:\\Windows\\System32\\cmd.exe",
-          "args": ["/d", "/c"]
-        }
-      },
-      "problemMatcher": []
-    }
-  ],
-  "inputs": [
-    {
-      "id": "comPort",
-      "type": "promptString",
-      "description": "Porta serial (ex.: COM3)",
-      "default": "COM3"
     }
   ]
 }

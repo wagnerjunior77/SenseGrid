@@ -6,33 +6,34 @@ function Run([string]$exe, [string[]]$argv) {
   $pretty = ($exe + " " + ($argv -join " ")).Trim()
   Write-Host ">>> $pretty"
 
-  # guardar ambiente atual
+  # Salva ambiente
   $prevPath = $env:PATH
   $prevCI = $env:CI; $prevGA = $env:GITHUB_ACTIONS; $prevMSYS = $env:MSYSTEM
   try {
-    # limpar variáveis que bagunçam subprocessos
+    # Remove variáveis que atrapalham subprocessos
     foreach ($k in @("CI","GITHUB_ACTIONS","MSYSTEM")) { Remove-Item "Env:$k" -ErrorAction SilentlyContinue }
 
-    # PATH sem MSYS2 e sem Git\usr\bin (evita python/ninja “alternativos”)
+    # PATH sem MSYS2 e sem Git\usr\bin
     $env:PATH = ($env:PATH -split ";" | Where-Object {
       $_ -and ($_ -notmatch "\\msys64\\") -and ($_ -notmatch "Git\\usr\\bin")
     }) -join ";"
 
+    # Executa
     & $exe @argv
     $code = $LASTEXITCODE
     if ($code -ne 0) { throw "Falha ao executar: $pretty (exit $code)" }
   }
   finally {
-    # restaurar ambiente
+    # Restaura ambiente
     $env:PATH = $prevPath
-    if ($null -ne $prevCI)   { $env:CI = $prevCI }            else { Remove-Item Env:CI -ErrorAction SilentlyContinue }
-    if ($null -ne $prevGA)   { $env:GITHUB_ACTIONS = $prevGA } else { Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue }
-    if ($null -ne $prevMSYS) { $env:MSYSTEM = $prevMSYS }      else { Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue }
+    if ($null -ne $prevCI)  { $env:CI = $prevCI }            else { Remove-Item Env:CI -ErrorAction SilentlyContinue }
+    if ($null -ne $prevGA)  { $env:GITHUB_ACTIONS = $prevGA } else { Remove-Item Env:GITHUB_ACTIONS -ErrorAction SilentlyContinue }
+    if ($null -ne $prevMSYS){ $env:MSYSTEM = $prevMSYS }      else { Remove-Item Env:MSYSTEM -ErrorAction SilentlyContinue }
   }
   $true
 }
 
-# --- checagens básicas ---
+# --- Checagens básicas ---
 Run "git" @("--version")
 
 function Resolve-Python311 {
@@ -58,7 +59,6 @@ if (-not $pyExe) {
 }
 Write-Host ">>> Usando Python: $pyExe"
 
-# --- caminhos do projeto/toolchain ---
 $RepoRoot     = (Resolve-Path "$PSScriptRoot\..").Path
 $ToolchainDir = Join-Path $RepoRoot "toolchain"
 $VenvDir      = Join-Path $ToolchainDir ".venv"
@@ -72,9 +72,8 @@ if (-not (Test-Path (Join-Path $VenvDir "Scripts\python.exe"))) {
   Run $pyExe @("-m","venv","$VenvDir")
 }
 $Vpy = (Join-Path $VenvDir "Scripts\python.exe")
-Run $Vpy @("-m","pip","install","--upgrade","pip","setuptools","wheel")
 
-# --- ESP-IDF v5.5.1: clone (se faltar) ---
+# --- ESP-IDF v5.5.1 ---
 if (-not (Test-Path (Join-Path $IdfDir "tools\idf_tools.py"))) {
   Write-Host ">>> Clonando esp-idf (v5.5.1) em $IdfDir"
   Run "git" @("clone","--depth","1","--branch","v5.5.1","https://github.com/espressif/esp-idf.git","$IdfDir")
@@ -82,19 +81,29 @@ if (-not (Test-Path (Join-Path $IdfDir "tools\idf_tools.py"))) {
   Write-Host ">>> esp-idf ja existe: $IdfDir"
 }
 
-# agora já existe; podemos apontar para as ferramentas do IDF
-$IdfTools = Join-Path $IdfDir "tools\idf_tools.py"
+# --- Requirements mínimos (core) COM CONSTRAINTS ---
+$ReqCore  = Join-Path $IdfDir "tools\requirements\requirements.core.txt"
+$ConsFile = Join-Path $env:USERPROFILE ".espressif\espidf.constraints.v5.5.txt"
 
-# --- requirements mínimos (core) ---
-$ReqCore = Join-Path $IdfDir "tools\requirements\requirements.core.txt"
-Run $Vpy @("-m","pip","install","--upgrade","-r","$ReqCore")
+# Se a constraints ainda não existir, gera uma (uma vez) via check-python-dependencies
+if (-not (Test-Path $ConsFile)) {
+  Run $Vpy @((Join-Path $IdfDir "tools\idf_tools.py"), "check-python-dependencies")
+}
 
-# --- mirrors e ambiente do IDF ---
+if (Test-Path $ConsFile) {
+  Run $Vpy @("-m","pip","install","--upgrade","--force-reinstall","-r","$ReqCore","-c","$ConsFile")
+} else {
+  # Fallback sem constraints (só se a linha acima não criar); export.bat depois avisa e dá o caminho
+  Run $Vpy @("-m","pip","install","--upgrade","--force-reinstall","-r","$ReqCore")
+}
+
+# --- Mirrors e sanitização do ambiente do IDF ---
 $env:IDF_PATH = $IdfDir
-# sem "https://": o idf_tools assume https e aceita mirror da Espressif
+# Sem "https://", o idf_tools aceita mirrors:
 $env:IDF_GITHUB_ASSETS = "dl.espressif.com/github_assets"
 
-# --- instalar toolchains com o idf_tools.py ---
+# --- Instala toolchains direto pelo idf_tools.py ---
+$IdfTools = Join-Path $IdfDir "tools\idf_tools.py"
 Run $Vpy @("$IdfTools","--non-interactive","install","--targets","esp32s3")
 
 Write-Host ">>> PRONTO."
