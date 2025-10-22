@@ -1,88 +1,97 @@
 <#  SenseGrid bootstrap (Windows)
+    - detecta Python sem quebrar
     - instala Python se faltar (winget/choco)
     - cria venv em toolchain\.venv
     - clona esp-idf v5.5.1 em toolchain\esp-idf
     - instala toolchains e deps
 #>
 
-param(
-  [string]$IdfTag = "v5.5.1"
-)
-
+param([string]$IdfTag = "v5.5.1")
 $ErrorActionPreference = "Stop"
 
-function Find-Python {
-  Write-Host ">>> Procurando Python..."
-  $candidates = @(
-    { & py -3 --version 2>$null; if ($LASTEXITCODE -eq 0) { return "py -3" } },
-    { & python3 --version 2>$null; if ($LASTEXITCODE -eq 0) { return "python3" } },
-    { & python --version 2>$null; if ($LASTEXITCODE -eq 0) { return "python" } }
-  )
-  foreach ($probe in $candidates) {
-    $cmd = & $probe
-    if ($cmd) { return $cmd }
-  }
-  return $null
+function Get-Python {
+  # tenta localizar um executavel de Python sem gerar erro
+  if (Get-Command py -ErrorAction SilentlyContinue)      { return @{Exe="py";      Pre=@("-3")} }
+  if (Get-Command python3 -ErrorAction SilentlyContinue) { return @{Exe="python3"; Pre=@()}   }
+  if (Get-Command python -ErrorAction SilentlyContinue)  { return @{Exe="python";  Pre=@()}   }
+  return @{Exe=$null; Pre=@()}
 }
 
 function Install-Python {
   Write-Host ">>> Python nao encontrado. Tentando instalar..."
-  # tenta winget
   if (Get-Command winget -ErrorAction SilentlyContinue) {
-    winget install -e --id Python.Python.3.11 --accept-source-agreements --accept-package-agreements
+    winget install -e --id Python.Python.3.11 --silent `
+      --accept-source-agreements --accept-package-agreements
     return
   }
-  # tenta chocolatey
   if (Get-Command choco -ErrorAction SilentlyContinue) {
     choco install python --version=3.11.9 -y
     return
   }
-  throw "Python nao encontrado e nao foi possivel instalar automaticamente (sem winget/choco). Instale manualmente o Python 3.10+ e rode o bootstrap novamente."
+  throw "Python nao encontrado e nao foi possivel instalar automaticamente (sem winget/choco). Instale manualmente Python 3.10+ e rode novamente."
 }
 
-$Root = (Resolve-Path -LiteralPath "$PSScriptRoot\..").Path
-$ToolchainDir = Join-Path $Root "toolchain"
-$VenvDir = Join-Path $ToolchainDir ".venv"
-$IdfDir = Join-Path $ToolchainDir "esp-idf"
+function Ensure-Git {
+  if (Get-Command git -ErrorAction SilentlyContinue) { return }
+  Write-Host ">>> Git nao encontrado. Instalando..."
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    winget install -e --id Git.Git --silent `
+      --accept-source-agreements --accept-package-agreements
+    return
+  }
+  if (Get-Command choco -ErrorAction SilentlyContinue) {
+    choco install git -y
+    return
+  }
+  throw "Git nao encontrado e sem instalador automatico. Instale o Git e rode de novo."
+}
 
+# --- paths
+$Root         = (Resolve-Path -LiteralPath "$PSScriptRoot\..").Path
+$ToolchainDir = Join-Path $Root "toolchain"
+$VenvDir      = Join-Path $ToolchainDir ".venv"
+$IdfDir       = Join-Path $ToolchainDir "esp-idf"
 New-Item -ItemType Directory -Force -Path $ToolchainDir | Out-Null
 
-# 1) Python + pip + venv
-$py = Find-Python
-if (-not $py) {
+# --- Python
+$py = Get-Python
+if (-not $py.Exe) {
   Install-Python
-  $py = Find-Python
+  $py = Get-Python
+  if (-not $py.Exe) { throw "Python ainda indisponivel apos instalacao." }
 }
-Write-Host ">>> Usando Python: $py"
+Write-Host ">>> Usando Python: $($py.Exe) $($py.Pre -join ' ')"
 
-# garante pip
-& $py -m ensurepip --upgrade 2>$null | Out-Null
-& $py -m pip install --upgrade pip virtualenv
+# helper pra chamar python com prefixo (py -3 ...)
+function Invoke-Py { param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
+  & $py.Exe @($py.Pre) @Args
+}
 
-# cria venv (se nao existir)
+# garante pip/venv
+Invoke-Py -m ensurepip --upgrade | Out-Null
+Invoke-Py -m pip install --upgrade pip virtualenv | Out-Null
+
 if (-not (Test-Path $VenvDir)) {
   Write-Host ">>> Criando venv em $VenvDir"
-  & $py -m venv $VenvDir
+  Invoke-Py -m venv $VenvDir
 }
 
-$Vpy = Join-Path $VenvDir "Scripts\python.exe"
-$Vpip = "$Vpy -m pip"
+$Vpy  = Join-Path $VenvDir "Scripts\python.exe"
 
-# 2) ESP-IDF
+# --- Git e ESP-IDF
+Ensure-Git
 if (-not (Test-Path $IdfDir)) {
   Write-Host ">>> Clonando esp-idf ($IdfTag) em $IdfDir"
   git clone --depth 1 --branch $IdfTag https://github.com/espressif/esp-idf.git $IdfDir
 }
 
-# 3) Requisitos Python do IDF
-Write-Host ">>> Instalando requirements.txt"
+Write-Host ">>> Instalando requirements do esp-idf"
 & $Vpy -m pip install --upgrade -r (Join-Path $IdfDir "requirements.txt")
 
-# 4) Toolchains (compiladores/SDK)
-Write-Host ">>> Instalando toolchains (idf_tools.py)... isso pode demorar"
+Write-Host ">>> Instalando toolchains (idf_tools.py) — pode demorar"
 & $Vpy (Join-Path $IdfDir "tools\idf_tools.py") --non-interactive install required
 
-# 5) Teste idf.py
+# --- smoke test do idf.py
 $export = ". `"$IdfDir\export.ps1`""
 Write-Host ">>> Testando idf.py --version"
 powershell -NoProfile -Command "$export; idf.py --version"
