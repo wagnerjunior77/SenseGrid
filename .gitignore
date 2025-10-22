@@ -1,7 +1,26 @@
+# ---- Build / artefatos de compilacao
 build/
+*.bin
+*.elf
+*.map
+
+# ---- Configs geradas pelo ESP-IDF
 sdkconfig
 sdkconfig.old
-.vscode/
-.idea/
 
+# ---- VS Code: ignora tudo, exceto as tasks importantes
+.vscode/*
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# ---- IDEs diversas
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Toolchain local (baixada pelo bootstrap) - nao versionar
 toolchain/**
+# permite arquivos "marcadores" para documentar a versao/uso
+!toolchain/README.md
+!toolchain/.keep
+!toolchain/versions.json

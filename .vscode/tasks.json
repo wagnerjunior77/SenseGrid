@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "SenseGrid: Bootstrap toolchain (first run)",
+      "type": "shell",
+      "windows": { "command": "powershell", "args": ["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File","scripts/bootstrap.ps1"] },
+      "linux":   { "command": "bash", "args": ["scripts/bootstrap.sh"] },
+      "osx":     { "command": "bash", "args": ["scripts/bootstrap.sh"] }
+    },
+    {
+      "label": "SenseGrid: Build (local toolchain)",
+      "type": "shell",
+      "windows": { "command": "powershell", "args": ["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File","scripts/build.ps1"] },
+      "linux":   { "command": "bash", "args": ["scripts/build.sh"] },
+      "osx":     { "command": "bash", "args": ["scripts/build.sh"] },
+      "problemMatcher": "$gcc"
+    },
+    {
+      "label": "SenseGrid: Build + Flash",
+      "type": "shell",
+      "windows": { "command": "powershell", "args": ["-NoLogo","-NoProfile","-ExecutionPolicy","Bypass","-File","scripts/flash.ps1","-Port","${input:serialPort}","-Baud","${input:baud}"] },
+      "linux":   { "command": "bash", "args": ["scripts/flash.sh","${input:serialPort}","${input:baud}"] },
+      "osx":     { "command": "bash", "args": ["scripts/flash.sh","${input:serialPort}","${input:baud}"] }
+    }
+  ],
+  "inputs": [
+    { "id": "serialPort", "type": "promptString", "description": "Serial (ex.: COM5, /dev/ttyUSB0)", "default": "COM5" },
+    { "id": "baud", "type": "pickString", "description": "Baudrate", "options": ["460800","921600","115200"], "default": "460800" }
+  ]
+}
