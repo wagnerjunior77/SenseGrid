@@ -1,0 +1,14 @@
+# toolchain/arduino-cli.yaml
+board_manager:
+  additional_urls:
+    - https://espressif.github.io/arduino-esp32/package_esp32_index.json
+    - https://jihulab.com/esp-mirror/espressif/arduino-esp32/-/raw/gh-pages/package_esp32_index_cn.json
+
+directories:
+  data: ./toolchain/arduino-data
+  downloads: ./toolchain/arduino-data/staging
+  user: ./          # <- VOLTA pro root
+
+network:
+  connection_timeout: 0
+

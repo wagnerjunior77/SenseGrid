@@ -1,28 +1,43 @@
-# ---- Build / artefatos de compilacao
+# ---- Build / artefatos
 build/
 *.bin
 *.elf
 *.map
 
-# ---- Configs geradas pelo ESP-IDF
+# ---- ESP-IDF (se existir por histórico)
 sdkconfig
 sdkconfig.old
 
-# ---- VS Code: ignora tudo, exceto as tasks importantes
+# ---- VS Code
 .vscode/*
 !.vscode/tasks.json
 !.vscode/extensions.json
+# (deixa settings.json de fora pra não versionar COM/porta local)
+.vscode/.browse.VC.db*
+.vscode/ipch/
+.vscode/launch.json
 
-# ---- IDEs diversas
-.idea/
-.DS_Store
-Thumbs.db
-
-# ---- Toolchain local (baixada pelo bootstrap) - nao versionar
-toolchain/**
-# permite arquivos "marcadores" para documentar a versao/uso
+# ---- Toolchain portable (ignora tudo e reabre exceções)
+toolchain/*
 !toolchain/README.md
 !toolchain/.keep
 !toolchain/versions.json
+!toolchain/arduino-cli.yaml
+!toolchain/get-arduino-cli.ps1
+!toolchain/build-arduino.ps1
+!toolchain/include-dirs.txt
+# caches pesados (já cobertos por toolchain/*, mas deixo explícito)
+toolchain/arduino-data/
+toolchain/arduino-downloads/
+toolchain/build/
 
-instructions.md
+# ---- Sketch builds
+/sketch/*/build/
+
+# ---- Lixos gerais
+.idea/
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+

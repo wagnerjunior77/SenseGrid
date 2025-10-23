@@ -1,0 +1,10 @@
+.\components\common\include
+.\components\core\include
+.\components\drivers_env\include
+.\components\drivers_radar\include
+.\components\parser_radar\include
+.\components\adapters_http\include
+.\components\adapters_mqtt\include
+.\components\adapters_logger\include
+.\components\adapters_flashrepo\include
+.\components\ports\include
