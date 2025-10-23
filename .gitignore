@@ -12,7 +12,7 @@ sdkconfig.old
 .vscode/*
 !.vscode/tasks.json
 !.vscode/extensions.json
-# (deixa settings.json de fora pra não versionar COM/porta local)
+!.vscode/settings.json
 .vscode/.browse.VC.db*
 .vscode/ipch/
 .vscode/launch.json

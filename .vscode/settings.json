@@ -1,0 +1,7 @@
+{
+  "sensegrid.fqbn": "esp32:esp32:esp32s3",
+  "sensegrid.serialPort": "COM4",
+  "sensegrid.coreVersion": "3.0.7",
+
+  "C_Cpp.intelliSenseEngine": "default"
+}
