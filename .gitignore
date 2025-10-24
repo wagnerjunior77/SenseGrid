@@ -34,10 +34,14 @@ toolchain/build/
 # ---- Sketch builds
 /sketch/*/build/
 
+instructions.md
+
 # ---- Lixos gerais
 .idea/
 .DS_Store
 Thumbs.db
 *.tmp
 *.log
+
+
 
