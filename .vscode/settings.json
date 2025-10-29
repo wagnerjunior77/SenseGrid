@@ -1,7 +1,25 @@
 {
-  "sensegrid.fqbn": "esp32:esp32:esp32s3",
+  "sensegrid.fqbn": "esp32:esp32:esp32c3",
   "sensegrid.serialPort": "COM4",
-  "sensegrid.coreVersion": "3.0.7",
+  "sensegrid.coreVersion": "3.3.2",             
 
-  "C_Cpp.intelliSenseEngine": "default"
+  "C_Cpp.intelliSenseEngine": "default",
+  "C_Cpp.default.compilerPath": "${workspaceFolder}/toolchain/arduino-data/packages/esp32/tools/esp-rv32/2302/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe",
+  "C_Cpp.default.intelliSenseMode": "gcc-x64",
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/**",
+    "${workspaceFolder}/sketch/**",
+    "${workspaceFolder}/components/**",
+    "${workspaceFolder}/toolchain/arduino-data/packages/esp32/hardware/esp32/${config:sensegrid.coreVersion}/**",
+    "${workspaceFolder}/toolchain/arduino-data/packages/esp32/tools/esp32-arduino-libs/**",
+    "${workspaceFolder}/toolchain/arduino-data/packages/esp32/tools/esp-rv32/**/riscv32-esp-elf/include/**",
+    "${workspaceFolder}/toolchain/arduino-data/packages/esp32/tools/esp-rv32/**/lib/gcc/riscv32-esp-elf/**/include/**"
+  ],
+  "C_Cpp.default.defines": [
+    "ARDUINO",
+    "ARDUINO_ARCH_ESP32",
+    "ARDUINO_ESP32C3_DEV"
+  ]
 }
+
+
