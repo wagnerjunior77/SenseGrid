@@ -1,94 +1,55 @@
 #include <Arduino.h>
+static const int PIN_OUT=4;    // O -> GPIO4
+static const int RADAR_RX=1;   // T -> RX (ESP)
+static const int RADAR_TX=3;   // R -> TX (ESP)
+HardwareSerial Radar(1);
 
-// ---- Pinos no ESP32-C3
-static const int RADAR_RX = 20;   // C3 recebe do radar (T do módulo)
-static const int RADAR_TX = 21;   // C3 transmite pro radar (R do módulo)
-static const int RADAR_OUT = 4;   // O do módulo (presença digital)
+void sendFrame(uint8_t func, uint8_t c1, uint8_t c2,
+               const uint8_t* data, size_t nData) {
+  uint16_t len = 1 + 2 + nData + 1;                // func+2cmd+data+checksum
+  uint8_t hdr[4] = {0x55,0x5A,(uint8_t)(len>>8),(uint8_t)len};
+  uint32_t s=0; for(int i=0;i<4;i++) s+=hdr[i];
+  uint8_t tmp[3+256]; size_t k=0;
+  tmp[k++]=func; s+=func; tmp[k++]=c1; s+=c1; tmp[k++]=c2; s+=c2;
+  for(size_t i=0;i<nData;i++){ tmp[k]=data[i]; s+=tmp[k]; k++; }
+  uint8_t sum=(uint8_t)(s&0xFF);
 
-// ---- UART do radar
-HardwareSerial RadarSerial(1); // use a UART “livre”
-
-// Parser bem simples para o frame 0x55 0xA5 ... (relato ativo)
-// Datasheet: header 0x55 0xA5, LEN(2, big-endian) = (func + cmd1 + cmd2 + data + checksum)
-enum State { H0, H1, L0, L1, PAYLOAD };
-State st = H0;
-uint16_t need = 0;
-uint8_t buf[64];
-uint16_t idx = 0;
-
-void resetParser() { st = H0; need = 0; idx = 0; }
-
-void processFrame(const uint8_t *p, uint16_t n) {
-  if (n < 4) return;
-  uint8_t func = p[0];
-  uint8_t cmd1 = p[1];
-  uint8_t cmd2 = p[2];
-  // dados = p[3 .. n-2], checksum = p[n-1]
-  const uint8_t *data = p + 3;
-  uint16_t dataLen = (n >= 4) ? (n - 4) : 0;
-  uint8_t sum = 0;
-  for (uint16_t i = 0; i < n - 1; ++i) sum += p[i];
-  if (sum != p[n-1]) {
-    Serial.println("[radar] checksum errado");
-    return;
-  }
-
-  // Relato ativo tipicamente func=0x03, cmd1=0x81
-  if (func == 0x03 && cmd1 == 0x81) {
-    // Datasheet descreve Data[0..] com:
-    // status(1), id(1), dist_cm(2, BE), vel_cm_s(2, BE, signed), dir(1), pitch(1), strength(2, BE)
-    if (dataLen >= 10) {
-      uint8_t status = data[0];        // 0: ninguém | 1: movimento | 2: presença (estático)
-      uint8_t id     = data[1];
-      uint16_t dist  = (uint16_t(data[2]) << 8) | data[3];
-      int16_t speed  = int16_t((uint16_t(data[4]) << 8) | data[5]);
-      int8_t  dirCos = int8_t(data[6]);
-      int8_t  pitch  = int8_t(data[7]);
-      uint16_t snr   = (uint16_t(data[8]) << 8) | data[9];
-
-      Serial.printf("[radar] st=%u id=%u dist=%.2fm v=%.2f m/s cos=%d pitch=%d snr=%u\n",
-                    status, id, dist / 100.0, speed / 100.0, dirCos, pitch, snr);
-    } else {
-      Serial.printf("[radar] frame curto: lenData=%u\n", dataLen);
-    }
-  } else {
-    Serial.printf("[radar] func=0x%02X cmd=0x%02X%02X lenData=%u\n", func, cmd1, cmd2, dataLen);
-  }
+  Radar.write(hdr,4);
+  Radar.write(tmp,k);
+  Radar.write(&sum,1);
 }
 
-void setup() {
+void sendGetVersion(){ sendFrame(0x00,0x00,0x01,nullptr,0); } // checksum sai correto
+
+void setup(){
   Serial.begin(115200);
-  while(!Serial) {}
-  pinMode(RADAR_OUT, INPUT);
-
-  // UART do radar
-  RadarSerial.begin(115200, SERIAL_8N1, RADAR_RX, RADAR_TX);
-
-  Serial.println("SenseGrid hello-radar (C3 + ME73MS01)");
-  Serial.println("OUT=alto => presença; UART=relatos 0x55 0xA5 ...");
+  pinMode(PIN_OUT, INPUT_PULLDOWN);
+  delay(400);
+  Radar.begin(115200, SERIAL_8N1, RADAR_RX, RADAR_TX);
+  Serial.println("\n[UART1] RX=GPIO1  TX=GPIO3  @115200  (CP2102 fora do caminho)");
 }
 
-void loop() {
-  // 1) leitura do pino OUT (digital)
-  static uint32_t tLast = 0;
-  if (millis() - tLast > 500) {
-    tLast = millis();
-    int out = digitalRead(RADAR_OUT);
-    Serial.printf("[OUT] %s\n", out ? "PRESENÇA" : "vazio");
-  }
+void loop(){
+  // OUT
+  static int last=-1; int cur=digitalRead(PIN_OUT);
+  if(cur!=last){ last=cur; Serial.printf("[OUT=%d] t=%lu\n",cur,(unsigned long)millis()); }
 
-  // 2) parser do protocolo UART
-  while (RadarSerial.available()) {
-    uint8_t b = RadarSerial.read();
-    switch (st) {
-      case H0: st = (b == 0x55) ? H1 : H0; break;
-      case H1: st = (b == 0xA5) ? L0 : ((b == 0x55) ? H1 : H0); break;
-      case L0: need = (uint16_t(b) << 8); st = L1; break;
-      case L1: need |= b; idx = 0; st = PAYLOAD; break;
-      case PAYLOAD:
-        if (idx < sizeof(buf)) buf[idx++] = b;
-        if (idx >= need) { processFrame(buf, idx); resetParser(); }
-        break;
-    }
+  // Ping versão a cada ~1.2s
+  static uint32_t t0=0; if(millis()-t0>1200){ t0=millis(); sendGetVersion(); Serial.println("[ping] get-version"); }
+
+  // Ler frames brutos e mostrar em HEX
+  while(Radar.available()>=4){
+    int b1=Radar.read(); if(b1!=0x55) continue;
+    int b2=Radar.read(); if(b2!=0xA5 && b2!=0x5A) continue; // A5=radar->host, 5A=host->radar
+    while(Radar.available()<2); uint8_t lh=Radar.read(), ll=Radar.read();
+    uint16_t len=(lh<<8)|ll;
+    while((int)Radar.available()<len);
+    static uint8_t pl[260];
+    for(uint16_t i=0;i<len;i++) pl[i]=Radar.read();
+
+    Serial.print((b2==0xA5)?"[RX radar] ":"[echo host] ");
+    Serial.printf("len=%u : 55 %02X %02X %02X ", (unsigned)len,(uint8_t)b2,lh,ll);
+    for(uint16_t i=0;i<len;i++) Serial.printf("%02X ", pl[i]);
+    Serial.println();
   }
 }

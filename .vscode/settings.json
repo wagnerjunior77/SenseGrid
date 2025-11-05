@@ -1,8 +1,7 @@
 {
   "sensegrid.fqbn": "esp32:esp32:esp32c3",
-  "sensegrid.serialPort": "COM4",
-  "sensegrid.coreVersion": "3.3.2",             
-
+  "sensegrid.serialPort": "COM5",
+  "sensegrid.coreVersion": "3.3.2",
   "C_Cpp.intelliSenseEngine": "default",
   "C_Cpp.default.compilerPath": "${workspaceFolder}/toolchain/arduino-data/packages/esp32/tools/esp-rv32/2302/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe",
   "C_Cpp.default.intelliSenseMode": "gcc-x64",
@@ -19,7 +18,15 @@
     "ARDUINO",
     "ARDUINO_ARCH_ESP32",
     "ARDUINO_ESP32C3_DEV"
-  ]
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c3"
+  },
+  "clangd.path": "C:\\Users\\WJR\\.espressif\\tools\\esp-clang\\esp-19.1.2_20250312\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=C:\\Users\\WJR\\.espressif\\tools\\riscv32-esp-elf\\esp-14.2.0_20241119\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
+    "--compile-commands-dir=c:\\Users\\WJR\\Desktop\\Dyona\\sensegrid-fw\\build"
+  ],
+  "idf.portWin": "COM5"
 }
-
-
