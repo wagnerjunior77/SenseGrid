@@ -1,0 +1,192 @@
+
+// sketch/SenseGrid/SenseGrid.ino
+// SenseGrid — ESP32-C3 + Radar de presença (ME73MS01)
+// Arquitetura: Core desacoplado; aqui fica apenas a ponte Arduino/Hardware.
+// Esta versão usa pins_radar.h + radar_serial.cpp para isolar a UART1 do radar.
+
+#include <Arduino.h>
+#include "pins_radar.h"
+
+// ---------- Utilidades ----------
+static inline void print_hex_byte(uint8_t b) {
+  const char* hex = "0123456789ABCDEF";
+  char s[3];
+  s[0] = hex[(b >> 4) & 0xF];
+  s[1] = hex[b & 0xF];
+  s[2] = 0;
+  Serial.print(s);
+}
+
+static inline void print_hex_sp(uint8_t b) {
+  print_hex_byte(b);
+  Serial.print(' ');
+}
+
+// Calcula checksum (soma simples modulo 256) sobre func, c1, c2 e payload
+static uint8_t frame_checksum(uint8_t func, uint8_t c1, uint8_t c2, const uint8_t* data, size_t n) {
+  uint32_t s = func + c1 + c2;
+  for (size_t i = 0; i < n; ++i) s += data[i];
+  return (uint8_t)(s & 0xFF);
+}
+
+// Envia um frame no formato: 55 5A | lenHi lenLo | func | c1 c2 | data... | chk
+static void sendFrame(uint8_t func, uint8_t c1, uint8_t c2, const uint8_t* data, size_t nData) {
+  uint16_t len = 1 /*func*/ + 2 /*c1,c2*/ + nData + 1 /*chk*/;
+  uint8_t hdr[4] = {0x55, 0x5A, (uint8_t)(len >> 8), (uint8_t)(len & 0xFF)};
+  for (int i = 0; i < 4; ++i) radar_serial_write_byte(hdr[i]);
+  radar_serial_write_byte(func);
+  radar_serial_write_byte(c1);
+  radar_serial_write_byte(c2);
+  for (size_t i = 0; i < nData; ++i) radar_serial_write_byte(data[i]);
+  uint8_t chk = frame_checksum(func, c1, c2, data, nData);
+  radar_serial_write_byte(chk);
+}
+
+// ---------- CLI simples no Serial (UART0) ----------
+String cli_buf;
+
+static void cli_help() {
+  Serial.println(F("\n[CLI] Comandos:"));
+  Serial.println(F("  help            - mostra este help"));
+  Serial.println(F("  radar?          - envia frame de sondagem (func=0x01)"));
+  Serial.println(F("  frame f c1 c2 [hex...] - envia frame manual"));
+  Serial.println(F("Ex.: frame 01 00 00"));
+}
+
+static uint8_t parse_hex_byte(const String& s) {
+  char c1 = s.length() > 0 ? s.charAt(0) : '0';
+  char c2 = s.length() > 1 ? s.charAt(1) : '0';
+  auto hexv = [](char c)->int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+    if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+    return 0;
+  };
+  return (uint8_t)((hexv(c1) << 4) | hexv(c2));
+}
+
+static void cli_process_line(const String& line) {
+  // split by spaces
+  int idx = 0;
+  auto next_token = [&](String& out)->bool {
+    while (idx < (int)line.length() && isspace((unsigned char)line[idx])) idx++;
+    if (idx >= (int)line.length()) return false;
+    int s = idx;
+    while (idx < (int)line.length() && !isspace((unsigned char)line[idx])) idx++;
+    out = line.substring(s, idx);
+    return true;
+  };
+
+  String tok;
+  if (!next_token(tok)) return;
+  tok.toLowerCase();
+
+  if (tok == "help" || tok == "?") {
+    cli_help();
+    return;
+  }
+
+  if (tok == "radar?" || tok == "ping") {
+    sendFrame(0x01, 0x00, 0x00, nullptr, 0);
+    Serial.println(F("[CLI] Enviado: radar? (func=0x01)"));
+    return;
+  }
+
+  if (tok == "frame") {
+    String sf, sc1, sc2;
+    if (!next_token(sf) || !next_token(sc1) || !next_token(sc2)) {
+      Serial.println(F("[CLI] uso: frame <f> <c1> <c2> [dataHex...]"));
+      return;
+    }
+    uint8_t f = parse_hex_byte(sf);
+    uint8_t c1 = parse_hex_byte(sc1);
+    uint8_t c2 = parse_hex_byte(sc2);
+
+    // até 32 bytes de payload
+    uint8_t data[32];
+    size_t n = 0;
+    String sn;
+    while (next_token(sn) && n < sizeof(data)) {
+      data[n++] = parse_hex_byte(sn);
+    }
+
+    sendFrame(f, c1, c2, data, n);
+    Serial.print(F("[CLI] Frame enviado: f="));
+    print_hex_byte(f); Serial.print(F(" c1="));
+    print_hex_byte(c1); Serial.print(F(" c2="));
+    print_hex_byte(c2); Serial.print(F(" data("));
+    Serial.print(n); Serial.println(F(")"));
+    return;
+  }
+
+  Serial.print(F("[CLI] comando desconhecido: "));
+  Serial.println(tok);
+  cli_help();
+}
+
+static void cli_poll() {
+  while (Serial.available() > 0) {
+    char c = (char)Serial.read();
+    if (c == '\r') continue;
+    if (c == '\n') {
+      String line = cli_buf;
+      cli_buf = "";
+      line.trim();
+      if (line.length() > 0) cli_process_line(line);
+    } else {
+      // limite simples para não estourar; corta se muito grande
+      if (cli_buf.length() < 160) cli_buf += c;
+    }
+  }
+}
+
+// ---------- Estado de ocupação discreta ----------
+int last_occ = -1;
+
+// ---------- Setup / Loop ----------
+void setup() {
+  Serial.begin(115200);
+  unsigned long t0 = millis();
+  while (!Serial && (millis() - t0) < 1500) { /* espera USB enumerar um pouco */ }
+
+  radar_serial_begin(); // configura UART1 (GPIO1/3) e o pino de ocupação (GPIO4)
+
+  Serial.println(F("\n[BOOT] SenseGrid iniciado"));
+  Serial.print(F("[UART1] RX=")); Serial.print(SG_RADAR_RX);
+  Serial.print(F("  TX=")); Serial.print(SG_RADAR_TX);
+  Serial.print(F("  @"));    Serial.println(SG_RADAR_BAUD);
+  Serial.print(F("[OCC] pin=")); Serial.println(SG_PIN_RADAR_OCC);
+  cli_help();
+}
+
+void loop() {
+  // 1) CLI no Serial (UART0)
+  cli_poll();
+
+  // 2) Leitura da linha discreta de presença
+  int occ = radar_occupancy_pin_read();
+  if (occ != last_occ) {
+    last_occ = occ;
+    Serial.print(F("[OCC] "));
+    Serial.print(occ);
+    Serial.print(F("  t="));
+    Serial.println(millis());
+  }
+
+  // 3) Recepção do radar pela UART1 (dump em hex)
+  int avail = radar_serial_available();
+  if (avail > 0) {
+    Serial.print(F("[RAD] "));
+    int count = 0;
+    while (radar_serial_available() > 0 && count < 256) {
+      int b = radar_serial_read_byte();
+      if (b < 0) break;
+      print_hex_sp((uint8_t)b);
+      count++;
+    }
+    Serial.println();
+  }
+
+  // Loop bem levinho; ajuste conforme necessidade
+  delay(2);
+}
