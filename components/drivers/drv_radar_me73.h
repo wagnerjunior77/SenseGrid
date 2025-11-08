@@ -5,8 +5,8 @@
 #include "../hal/hal_uart.h"
 
 #ifndef RADAR_SIGNAL_MAX
-// Ajuste conforme seu firmware: 255 ou 1023/4095.
-#define RADAR_SIGNAL_MAX 255.0f
+// Observado sinal até ~1685; usar 2047.0f dá headroom e evita saturar.
+#define RADAR_SIGNAL_MAX 2047.0f
 #endif
 
 struct RadarRawFrame {
@@ -26,7 +26,7 @@ struct RadarParsed {
   uint16_t distance_cm;   // cm (BE no firmware observado)
   int16_t  speed_cms;     // cm/s (BE, signed)
   int8_t   pitch_deg;     // opcional (se aplicável)
-  uint16_t signal;        // nível relativo (BE, 0..255/1023/4095)
+  uint16_t signal;        // nível relativo (0..~2047/4095)
 
   // normalizados (SI)
   float    dist_m;        // m
