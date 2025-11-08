@@ -56,7 +56,6 @@ bool radar_read_parsed(RadarHandle* r, RadarParsed* out, uint32_t timeout_ms) {
   const uint8_t c2 = sum_full();
   if (expect_sum != c1 && expect_sum != c2) return false;
 
-  // --- layout que estava OK no teu repo ---
   // FUNC=0x03, CMD1=0x81 → telemetria de presença
   if (func == 0x03 && cmd1 == 0x81 && pay_n >= 10) {
     memset(out, 0, sizeof(*out));
