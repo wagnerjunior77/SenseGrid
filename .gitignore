@@ -33,6 +33,7 @@ toolchain/build/
 
 # ---- Sketch builds
 /sketch/*/build/
+/sketch/SenseGrid/build_backups/
 
 instructions.md
 
