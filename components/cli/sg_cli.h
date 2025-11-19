@@ -1,18 +1,23 @@
 #pragma once
-#include <Arduino.h>
-#include "../util/sg_log.h"
+#include <Arduino.h>  // para Stream/Print
 
-// Estado de runtime controlado pelo CLI
-struct SgCliState {
-  bool stream_on = false;         // se true, imprime leituras contínuas
-  bool json_on   = true;          // formato: JSON (true) ou texto (false)
-  uint16_t rate_ms = 0;           // mínimo intervalo entre prints (0 = sem throttle)
-};
+// Callbacks que o .ino registra
+using SgCliHelpFn   = void(*)(Print& out);
+using SgCliInfoFn   = void(*)(Print& out);
+using SgCliStreamFn = void(*)(bool on);
+using SgCliRateFn   = void(*)(uint32_t ms);
+using SgCliJsonFn   = void(*)(bool on);
+using SgCliLogFn    = void(*)(int level);
 
-void sg_cli_init(Stream* io);
-void sg_cli_poll();
+// Registra os handlers (help, info, stream, rate, json, log)
+void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
+                         SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l);
 
-// getters para o sketch consultar
-bool     sg_cli_stream_on();
-bool     sg_cli_json_on();
-uint16_t sg_cli_rate_ms();
+// Faz o parse linha-a-linha do que chega pela serial
+void sg_cli_poll(Stream& in, Print& out);
+
+// Versão prática: usa a mesma serial pra input e output
+inline void sg_cli_poll(Stream& io) { sg_cli_poll(io, io); }
+
+// Opcional: imprime o help padrão se você quiser chamar direto
+void sg_cli_print_default_help(Print& out);
