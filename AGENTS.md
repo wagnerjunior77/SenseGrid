@@ -2,122 +2,173 @@
 
 > **Purpose.** Passo-a-passo objetivo para agentes (e humanos) trabalharem neste repo **sem quebrar a arquitetura**.  
 > **Pilares:** SOLID (com foco em DIP), **endpoint-agnostic** (Core desacoplado), build **Arduino CLI portable**.  
-> **Fase atual:** **Atividade 2 — Bring-up de hardware & drivers**.
+> **Fase atual:** **Atividade 2 — Bring-up de hardware & drivers** (A3 virá na próxima etapa).
 
 ---
 
 ## 0) Visão rápida
 
-- **Alvo**: ESP32-C3 DevKitC (`esp32:esp32:esp32c3`).  
-- **Sensor principal**: radar 24 GHz (ME73MS01) via **UART**.  
-- **Arquitetura**: `components/` (C puro) → **Core** orquestra; **Drivers** (radar/env) só capturam; **Parser** traduz bytes; **Adapters** (HTTP/MQTT/Logger/FlashRepo) expõem para o “mundo”.  
-- **Regra de ouro**: **Core não conhece endpoints**. Qualquer side-effect externo (MQTT/HTTP/Flash) passa por **Adapters**.
+- **Alvo:** ESP32-C3 DevKitC (`esp32:esp32:esp32c3`).  
+- **Sensor principal:** radar 24 GHz ME73MS01 via **UART**.  
+- **Arquitetura:** `components/` (C) contém **Core** + **Drivers** + **Parser**. O **sketch** (C++) apenas integra/cola (glue) e expõe CLI/monitor.  
+- **Regra de ouro:** **Core não conhece endpoints**. Qualquer IO externo (HTTP/MQTT/Flash/Serial logs) passa por **Adapters**.
 
 ---
 
 ## 1) Build oficial (Arduino CLI portable)
 
-> Não use IDF direto aqui. As Tasks do VS Code deixam tudo portátil, sem depender de Python/instalações globais.
+> Não use IDF aqui. As *Tasks* do VS Code tornam o build reprodutível (sem instalações globais).
 
-1. **Baixar CLI (1x):**  
+1. **Baixar CLI (1x)**  
    VS Code → **Run Task** → `Arduino (portable): Bootstrap CLI (1x)`
 
-2. **Ajustar timeout (1x):**  
-   VS Code → **Run Task** → `Arduino (portable): Configurar timeout (1x)`
+2. **Ajustar timeout (1x)**  
+   VS Code → **Run Task** → `Arduino (portable): Configurar timeout (1x)`  
+   (isso seta `network.connection_timeout=1200s` no `toolchain/arduino-cli.yaml`).
 
-3. **Instalar cores/libs (1x):**  
-   VS Code → **Run Task** → `Arduino (portable): Instalar core esp32 + deps (1x)`
+3. **Atualizar índice & instalar core (1x ou quando trocar versão)**  
+   VS Code → **Run Task** → `Arduino (portable): Update Index`  
+   VS Code → **Run Task** → `Arduino (portable): Install Core (1x ou quando trocar versão)`
 
-4. **Build + export bin/elf:**  
+4. **Build + export `.bin/.elf`**  
    VS Code → **Run Task** → `Arduino (portable): Build + Export (bin/elf)`
 
-   Isso chama:  
-   `toolchain/build-arduino.ps1 -SketchPath .\sketch\SenseGrid -YamlPath .\toolchain\arduino-cli.yaml -CliPath .\toolchain\arduino-cli.exe -BuildPath .\toolchain\build\SenseGrid -Fqbn (settings.json) -ExportBinaries`
+**Config padrão versionada** (`.vscode/settings.json`):  
+- `sensegrid.fqbn = esp32:esp32:esp32c3`  
+- `sensegrid.coreVersion = 3.3.2`  
+- `sensegrid.serialPort = COM5`
 
-- **Config padrão** (já versionada em `.vscode/settings.json`):  
-  - `sensegrid.fqbn = esp32:esp32:esp32c3`  
-  - `sensegrid.coreVersion = 3.3.2`
+**Saída esperada:** artefatos em `toolchain/build/SenseGrid/`.
 
 ---
 
 ## 2) Upload e Monitor
 
-- **Upload (a partir dos binários exportados):**  
+- **Upload** (usando os binários exportados):  
   VS Code → **Run Task** → `Arduino (portable): Upload (from exported binaries)`
 
 - **Monitor Serial** (115200):  
-  VS Code → **Terminal** →  
-  `toolchain\arduino-cli.exe monitor --config-file toolchain\arduino-cli.yaml -p COM5 -c baudrate=115200`
+  ```powershell
+  toolchain\arduino-cli.exe monitor `
+    --config-file toolchain\arduino-cli.yaml `
+    -p COM5 -c baudrate=115200
+Troque COM5 se necessário. O repo assume COM5 por padrão.
 
-> **Dica:** se a sua porta for diferente, troque `COM5` (o repo fixa COM5 em `.vscode/settings.json`).
+3) CLI (Serial) — comandos suportados
+pgsql
+Copiar código
+help               # lista os comandos
+info               # info de build/pinos e range atual
+stream on|off      # liga/desliga streaming contínuo
+rate <Hz>          # limita a taxa do stream (0 = sem limite)
+json on|off        # seleciona JSON por linha ou formato humano
+log <0..3>         # nível: 0=error, 1=warn, 2=info (padrão), 3=debug
+# (quando habilitado) pipe show / pipe set <key> <value>
+Formato JSON (stream): por linha, com chaves como ts_ms, status, dist_m, speed_mps, snr, distance_cm, speed_cms, signal.
+Estados do radar (bruto): none, exist, move (podem ser filtrados no pipeline A3).
 
----
+4) Logger de sessão (PC)
+Script simples para salvar .jsonl com tudo que chega na serial:
 
-## 3) Regras de arquitetura (fiscais do SOLID)
+bash
+Copiar código
+python tools/serial_logger.py -p COM5 -b 115200 -o logs/session.jsonl
+Gera 1 JSON por linha (fácil de abrir no pandas/Excel/BigQuery).
 
-- **DIP**: `core/` (C) só fala com **interfaces** (headers em `components/*/include`).  
-- **Drivers**: apenas acesso a HW/barramentos (UART/I2C/GPIO). **Sem** lógica de negócios.  
-- **Parser**: traduz bytes do radar → `Meas`.  
-- **Core**: agrega `Meas`, aplica zona/preset/calibração. **Não** publica MQTT/HTTP.  
-- **Adapters**: HTTP/MQTT/Logger/FlashRepo/Ports. Qualquer IO externo **sai por aqui**.  
-- **Proibido no Core**: `WiFi.begin`, `HTTPServer`, `MQTTClient`, `Serial.printf` (use Adapter Logger).
+Use --raw para registrar também linhas não-JSON (ex.: logs de boot).
 
----
+5) Conexões / Pinos (checar no código)
+Radar ME73MS01 (UART)
 
-## 4) Layout do repo (mínimo que você precisa saber)
+Alimente conforme o módulo (datasheet). Muitos módulos aceitam 3.6–5.5 V; nível lógico UART é 3V3.
 
-```
-components/
-  core/              # Regras de negócio (C) – sem dependências externas
-  drivers_radar/     # UART → frames brutos
-  parser_radar/      # bytes → Meas
-  drivers_env/       # I2C → T/RH/Lux
-  adapters_{http,mqtt,logger,flashrepo}/
-  common/, ports/    # tipos, abstrações, contratos
+UART do ESP32-C3: usar o par RX/TX definido em sketch/SenseGrid/pins_radar.h
 
-sketch/SenseGrid/    # Ponte Arduino (C++) chamando os símbolos C de components/
-toolchain/           # arduino-cli portable, scripts e build export
-.vscode/             # tasks + settings (FQBN/porta/coreVersion)
-docs/                # arquitetura, contrato de dados, cronograma...
-```
+SG_RADAR_RX = RX do ESP (liga no T do radar)
 
----
+SG_RADAR_TX = TX do ESP (liga no R do radar)
 
-## 5) Objetivos desta fase (Atividade 2)
+OCC (digital) → SG_PIN_RADAR_OCC (pull adequado no código).
 
-- UART do radar inicializada; “heartbeat” no Logger a cada 1 s.  
-- Se o radar estiver plugado: **parse** e “dump” de `{distance, speed, signal}` como JSON no Logger.  
-- Stubs de env (T/RH/Lux) compilando com fallback.  
-- CLI mínima via Logger: `help`, `version`, `radar?`, `env?` (JSON por linha).
+Os nomes e GPIOs estão no código (arquivo pins_radar.h). Se alterar fios, altere lá e commite.
 
-Checklist:  
-- [ ] Build reproduzível em Windows “limpo” (apenas com as Tasks).  
-- [ ] `toolchain/build/SenseGrid/` com `.bin/.elf` exportados.  
-- [ ] Serial @115200 entregando JSON estável.  
-- [ ] Sem chamadas de endpoint no Core (validar include graph).
+6) Configuração do radar no boot (range fixo 2,00 m)
+No radar_config_boot() são enviados frames proprietários do ME73MS01:
 
----
+VO hold = 3000 ms (0x0BB8): 55 5A 00 06 01 80 14 0B B8 0D
 
-## 6) Pins / Conexões (preencher no bring-up real)
+Presence max = 200 cm (0x00C8): 55 5A 00 06 01 80 0E 00 C8 0C
 
-- Radar ME73MS01 → **UART** (3V3).  
-  - **ESP32-C3**: TXD = GPIOx, RXD = GPIOy (definir conforme fiação final)  
-  - 3V3 e GND compartilhados.  
-- I2C env (opcional): SDA = GPIOxx, SCL = GPIOyy.  
-> Atualize aqui quando os pinos ficarem definitivos.
+Save all: 55 5A 00 04 01 20 04 D8
 
----
+Esses bytes incluem header, comprimento, comando, payload e checksum. Para outro alcance, alterar o payload (ex.: 500 cm → 0x01F4) e recomputar o checksum.
 
-## 7) Troubleshooting rápido
+7) Regras de arquitetura (fiscais do SOLID)
+DIP: core/ fala apenas com interfaces em components/*/include.
 
-- **Compila mas não encontra headers de `components/`:** ver `toolchain/include-dirs.txt`.  
-- **“Port COM ocupada”**: feche monitores/serial anteriores.  
-- **Build lento/falha de rede**: rode a Task de “Configurar timeout”.  
-- **IDF aparecendo**: é **legacy**; ignore as Tasks de IDF (estão desativadas).
+Drivers: acesso a HW/barramentos (UART/I2C/GPIO). Sem lógica de negócios.
 
----
+Parser: bytes → medidas (distance_cm, speed_cms, signal, snr, status).
 
-## 8) Estilo de PR para agentes
+Core: agrega/filtra/aplica zona/presets. Não publica MQTT/HTTP/Serial diretamente.
 
-- PRs **pequenos e incrementais**, com `docs/` atualizados quando afetar contrato.  
-- Nunca introduza dependência de endpoint no `core/`. Crie/estenda um Adapter.
+Adapters: HTTP/MQTT/Logger/FlashRepo/Ports — todo IO externo sai por aqui.
+
+Proibido no Core: WiFi.begin, HTTPServer, MQTTClient, Serial.printf (use adapter Logger).
+
+8) Estado A2 (o que consideramos “pronto”)
+✅ UART do radar inicializada; frames válidos por ≥10 min (0 checksum inválido).
+
+✅ JSON estável com {distance, speed, signal, snr, status} no stream.
+
+✅ CLI básica operacional (comandos acima).
+
+✅ Build reprodutível e artefatos exportados.
+
+⏭️ A3 (próximo): pipeline de detecção com gating por distância/SNR, filtros (median3 + IIR), baseline EMA e histerese/holds.
+
+9) Troubleshooting rápido
+Leitura “sempre move” / vibração: ventiladores e micro-movimento do suporte podem induzir falso move. Fixe o módulo (fita dupla face/abraçadeira) e reduza vibrações. A3 introduzirá histerese e gating para robustez.
+
+Compila mas “não acha headers de components/”: confira #include relativos no glue e o includePath do VS Code.
+
+Checksum inválido: ruído na UART ou baud incorreto. Garanta GND comum e fios curtos.
+
+Porta COM ocupada: feche monitores/serial anteriores.
+
+Build lento/falha de rede: rode a Task de Configurar timeout (1x).
+
+10) Estilo de PR
+PRs pequenos e incrementais; se alterar contrato/JSON, atualize docs/ e exemplos.
+
+Não introduza dependência de endpoint no core/. Se precisar, crie/estenda um Adapter.
+
+Anexe amostras reais (trechos .jsonl) quando tocar no parser/CLI.
+
+11) Matriz “known-good”
+Board: ESP32-C3 DevKitC
+
+FQBN: esp32:esp32:esp32c3
+
+Core: 3.3.2
+
+Baud: 115200
+
+Serial port: COM5 (ajustável)
+
+12) Roadmap curto (A3)
+components/pipeline/ com API:
+
+c++
+Copiar código
+struct SgPipeIn  { uint8_t raw_status; uint16_t dist_cm; int16_t speed_cms; float snr; uint32_t now_ms; };
+enum SgState { SG_EMPTY=0, SG_PRESENCE=1, SG_MOTION=2 };
+struct SgPipeOut { SgState state; SgState stable; uint32_t stable_ms; bool gated; };
+void   sg_pipe_init();
+void   sg_pipe_set_params(const SgParams& p);
+SgPipeOut sg_pipe_step(const SgPipeIn& in);
+Gating por distância/SNR; filtros (median3 + IIR); baseline EMA; histerese + holds.
+
+CLI: pipe show / pipe set <key> <value> para tunar parâmetros em tempo real.
+
+

@@ -8,10 +8,13 @@ using SgCliStreamFn = void(*)(bool on);
 using SgCliRateFn   = void(*)(uint32_t ms);
 using SgCliJsonFn   = void(*)(bool on);
 using SgCliLogFn    = void(*)(int level);
+using SgCliPipeFn   = void(*)(int argc, char* argv[], Print& out);
+using SgCliRangeFn  = void(*)(uint32_t cm);
 
-// Registra os handlers (help, info, stream, rate, json, log)
+// Registra os handlers (help, info, stream, rate, json, log, pipe, range)
 void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
-                         SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l);
+                         SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l,
+                         SgCliPipeFn p, SgCliRangeFn rg);
 
 // Faz o parse linha-a-linha do que chega pela serial
 void sg_cli_poll(Stream& in, Print& out);
