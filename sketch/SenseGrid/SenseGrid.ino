@@ -39,7 +39,7 @@ static uint32_t g_last_seen_ms = 0;
 static uint32_t g_tick_ms = 0;
 
 static int   g_occ_last = -1;
-static bool  g_stream = false;          // << quieto por padrão
+static bool  g_stream = true;           // liga stream por padrão para logging
 static bool  g_stream_json = true;
 static unsigned long g_stream_period_ms = 50; // ~20 Hz
 
@@ -401,6 +401,8 @@ void setup() {
     pipe_save(g_pipe_params); // garante que pipe show leia o que está em NVS
   }
   g_range_cm = g_pipe_params.max_range_cm;
+
+  LOGI("[CFG] stream default=on (use 'stream off' para silenciar)");
 
   Serial.println();
   LOGI("[BOOT] SenseGrid + Pipeline + CLI");

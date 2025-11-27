@@ -125,6 +125,19 @@ Campos:
 
 ---
 
+## Detecção v1
+
+Pipeline de presença/movimento com gate de distǽncia/SNR, baseline EMA e holds.
+
+- **Ligando stream JSON**: `stream on`, `json on` (por padrão já iniciam ativos para logging).
+- **Range (HW + pipeline)**: `range 2|4|6` (ou `pipe set dist_max 200|400|600`). Fora do range, o stream Ǹ silenciado.
+- **Tuning rápido**:
+  - Reduzir falsos positivos longe: `pipe set dist_max 200` e subir `snr_min` / `delta_exist`.
+  - Detectar presença sutil: baixar `snr_min` / `delta_exist` e subir `hold_exist`.
+  - Motion demais: subir `snr_move` e `speed_thr`.
+- **Dump de parâmetros**: `pipe show` (log/grava NVS).
+- Detalhes (state machine, fórmulas, playbook) em `docs/pipeline_v1.md`.
+
 ## Coleta de dados no PC (JSONL)
 
 Use o script `tools/serial_logger.py` para salvar JSONL contínuo.  
