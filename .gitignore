@@ -25,7 +25,11 @@ toolchain/*
 !toolchain/arduino-cli.yaml
 !toolchain/get-arduino-cli.ps1
 !toolchain/build-arduino.ps1
+!toolchain/install-cp210x-driver.ps1
+!toolchain/prefetch-discovery-tools.ps1
 !toolchain/include-dirs.txt
+!toolchain/bundled-tools/
+!toolchain/bundled-tools/**
 # caches pesados (já cobertos por toolchain/*, mas deixo explícito)
 toolchain/arduino-data/
 toolchain/arduino-downloads/

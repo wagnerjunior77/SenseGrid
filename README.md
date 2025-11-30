@@ -43,26 +43,32 @@ Requisitos:
 
 ### Passo a passo (VS Code → Terminal → “Run Task…”)
 
-1. **Arduino (portable): Bootstrap CLI (1x)**  
+1. **Arduino (portable): Ensure CP210x driver (Win) [1x]**  
+   Instala o driver CP210x incluido em `driver/` via `pnputil` (pode pedir admin). As tasks de Upload/Monitor ja dependem dela.
+
+2. **Arduino (portable): Bootstrap CLI (1x)**  
    Baixa/garante o `arduino-cli.exe` em `toolchain/`.
 
-2. **Arduino (portable): Configurar timeout (1x)**  
+3. **Arduino (portable): Configurar timeout (1x)**  
    Seta `network.connection_timeout=1200s` no YAML do repo.
 
-3. **Arduino (portable): Update Index**
+4. **Arduino (portable): Prefetch discovery tools**  
+   Coloca o `mdns-discovery` (Windows) em cache local antes do update-index.
 
-4. **Arduino (portable): Install Core (1x ou quando trocar versão)**  
+5. **Arduino (portable): Update Index**
+
+6. **Arduino (portable): Install Core (1x ou quando trocar versao)**  
    Instala `esp32:esp32@3.3.2`.
 
-5. **Arduino (portable): Build + Export (bin/elf)**  
+7. **Arduino (portable): Build + Export (bin/elf)**  
    Gera artefatos em `toolchain/build/SenseGrid/`:
-   - `SenseGrid.ino.bin`, `SenseGrid.ino.elf` (e demais imagens quando aplicável)
+   - `SenseGrid.ino.bin`, `SenseGrid.ino.elf` (e demais imagens quando aplicavel)
 
-6. **Arduino (portable): Upload (from exported binaries)**  
-   Faz o flash usando os binários exportados.  
+8. **Arduino (portable): Upload (from exported binaries)**  
+   Faz o flash usando os binarios exportados.  
    > Configure a porta em `settings.json`: `"sensegrid.serialPort": "COM5"`
 
-7. **Arduino (portable): Monitor**  
+9. **Arduino (portable): Monitor**  
    Abre o serial monitor a **115200**.
 
 ### Configurações do workspace (já no repo)

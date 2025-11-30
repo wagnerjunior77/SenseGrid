@@ -8,8 +8,11 @@
       "options": { "cwd": "${workspaceFolder}" },
       "command": "powershell",
       "args": [
-        "-NoProfile", "-ExecutionPolicy", "Bypass",
-        "-File", "${workspaceFolder}\\toolchain\\get-arduino-cli.ps1"
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\toolchain\\get-arduino-cli.ps1"
       ],
       "problemMatcher": []
     },
@@ -20,34 +23,59 @@
       "options": { "cwd": "${workspaceFolder}" },
       "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
       "args": [
-        "config", "set", "network.connection_timeout", "1200s",
-        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
+        "config",
+        "set",
+        "network.connection_timeout",
+        "1200s",
+        "--config-file",
+        "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
       ],
       "problemMatcher": [],
       "dependsOn": ["Arduino (portable): Bootstrap CLI (1x)"]
     },
     {
-      "label": "Arduino (portable): Update Index",
-      "detail": "Atualiza o índice de cores do Arduino-ESP32",
+      "label": "Arduino (portable): Prefetch discovery tools",
+      "detail": "Garante mdns-discovery (Windows) em cache local antes do update-index.",
       "type": "shell",
       "options": { "cwd": "${workspaceFolder}" },
-      "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+      "command": "powershell",
       "args": [
-        "core", "update-index",
-        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\toolchain\\prefetch-discovery-tools.ps1"
       ],
       "problemMatcher": [],
       "dependsOn": ["Arduino (portable): Configurar timeout (1x)"]
     },
     {
-      "label": "Arduino (portable): Install Core (1x ou quando trocar versão)",
-      "detail": "Instala esp32:esp32@versão especificada",
+      "label": "Arduino (portable): Update Index",
+      "detail": "Atualiza o indice de cores do Arduino-ESP32",
       "type": "shell",
       "options": { "cwd": "${workspaceFolder}" },
       "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
       "args": [
-        "core", "install", "esp32:esp32@${config:sensegrid.coreVersion}",
-        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
+        "core",
+        "update-index",
+        "--config-file",
+        "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
+      ],
+      "problemMatcher": [],
+      "dependsOn": ["Arduino (portable): Prefetch discovery tools"]
+    },
+    {
+      "label": "Arduino (portable): Install Core (1x ou quando trocar versao)",
+      "detail": "Instala esp32:esp32@versao especificada",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+      "args": [
+        "core",
+        "install",
+        "esp32:esp32@${config:sensegrid.coreVersion}",
+        "--config-file",
+        "${workspaceFolder}\\toolchain\\arduino-cli.yaml"
       ],
       "problemMatcher": [],
       "dependsOn": ["Arduino (portable): Update Index"]
@@ -58,34 +86,61 @@
       "options": { "cwd": "${workspaceFolder}" },
       "command": "powershell",
       "args": [
-        "-NoProfile","-ExecutionPolicy","Bypass",
-        "-File","${workspaceFolder}\\toolchain\\build-arduino.ps1",
-        "-SketchPath","${workspaceFolder}\\sketch\\SenseGrid",
-        "-YamlPath","${workspaceFolder}\\toolchain\\arduino-cli.yaml",
-        "-CliPath","${workspaceFolder}\\toolchain\\arduino-cli.exe",
-        "-Fqbn","${config:sensegrid.fqbn}",
-        "-BuildPath","${workspaceFolder}\\toolchain\\build\\SenseGrid",
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\toolchain\\build-arduino.ps1",
+        "-SketchPath",
+        "${workspaceFolder}\\sketch\\SenseGrid",
+        "-YamlPath",
+        "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
+        "-CliPath",
+        "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+        "-Fqbn",
+        "${config:sensegrid.fqbn}",
+        "-BuildPath",
+        "${workspaceFolder}\\toolchain\\build\\SenseGrid",
         "-ExportBinaries"
       ],
       "problemMatcher": ["$gcc"],
-      "dependsOn": ["Arduino (portable): Install Core (1x ou quando trocar versão)"],
+      "dependsOn": ["Arduino (portable): Install Core (1x ou quando trocar versao)"],
       "group": { "kind": "build", "isDefault": true }
     },
     {
-  "label": "Arduino (portable): Upload (from exported binaries)",
-  "type": "shell",
-  "options": { "cwd": "${workspaceFolder}" },
-  "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
-  "args": [
-    "upload",
-    "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
-    "--fqbn", "${config:sensegrid.fqbn}",
-    "-p", "${config:sensegrid.serialPort}",
-    "--input-dir", "${workspaceFolder}\\toolchain\\build\\SenseGrid"
-  ],
-  "problemMatcher": []
-}
-,
+      "label": "Arduino (portable): Ensure CP210x driver (Win)",
+      "detail": "Instala driver USB-UART CP210x (COM) usando pacote incluso.",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\toolchain\\install-cp210x-driver.ps1"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Arduino (portable): Upload (from exported binaries)",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
+      "args": [
+        "upload",
+        "--config-file",
+        "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
+        "--fqbn",
+        "${config:sensegrid.fqbn}",
+        "-p",
+        "${config:sensegrid.serialPort}",
+        "--input-dir",
+        "${workspaceFolder}\\toolchain\\build\\SenseGrid"
+      ],
+      "problemMatcher": [],
+      "dependsOn": ["Arduino (portable): Ensure CP210x driver (Win)"]
+    },
     {
       "label": "Arduino (portable): Monitor",
       "type": "shell",
@@ -93,13 +148,16 @@
       "command": "${workspaceFolder}\\toolchain\\arduino-cli.exe",
       "args": [
         "monitor",
-        "--config-file", "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
-        "-p", "${config:sensegrid.serialPort}",
-        "-c", "baudrate=115200"
+        "--config-file",
+        "${workspaceFolder}\\toolchain\\arduino-cli.yaml",
+        "-p",
+        "${config:sensegrid.serialPort}",
+        "-c",
+        "baudrate=115200"
       ],
-      "problemMatcher": []
+      "problemMatcher": [],
+      "dependsOn": ["Arduino (portable): Ensure CP210x driver (Win)"]
     },
-
     // ---- Opcional: placeholders do IDF legado ----
     {
       "label": "ESP-IDF (legacy): Build",

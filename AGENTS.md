@@ -26,11 +26,15 @@
    VS Code → **Run Task** → `Arduino (portable): Configurar timeout (1x)`  
    (isso seta `network.connection_timeout=1200s` no `toolchain/arduino-cli.yaml`).
 
-3. **Atualizar índice & instalar core (1x ou quando trocar versão)**  
+3. **Preencher cache de discovery (1x)**  
+   VS Code → **Run Task** → `Arduino (portable): Prefetch discovery tools`  
+   (garante `mdns-discovery` local; evita travar no update-index).
+
+4. **Atualizar índice & instalar core (1x ou quando trocar versão)**  
    VS Code → **Run Task** → `Arduino (portable): Update Index`  
    VS Code → **Run Task** → `Arduino (portable): Install Core (1x ou quando trocar versão)`
 
-4. **Build + export `.bin/.elf`**  
+5. **Build + export `.bin/.elf`**  
    VS Code → **Run Task** → `Arduino (portable): Build + Export (bin/elf)`
 
 **Config padrão versionada** (`.vscode/settings.json`):  
@@ -39,6 +43,8 @@
 - `sensegrid.serialPort = COM5`
 
 **Saída esperada:** artefatos em `toolchain/build/SenseGrid/`.
+
+**Driver USB (Windows):** se a porta COM não aparecer, rode `Arduino (portable): Ensure CP210x driver (Win)` (usa o pacote `driver/` com pnputil; pode pedir admin). As tasks de Upload/Monitor já dependem dela.
 
 ---
 
