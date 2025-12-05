@@ -10,10 +10,11 @@ static SgCliJsonFn   cb_json   = nullptr;
 static SgCliLogFn    cb_log    = nullptr;
 static SgCliPipeFn   cb_pipe   = nullptr;
 static SgCliRangeFn  cb_range  = nullptr;
+static SgCliCalibFn  cb_calib  = nullptr;
 
 void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
                          SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l,
-                         SgCliPipeFn p, SgCliRangeFn rg) {
+                         SgCliPipeFn p, SgCliRangeFn rg, SgCliCalibFn cb) {
   cb_help   = h;
   cb_info   = i;
   cb_stream = s;
@@ -22,6 +23,7 @@ void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
   cb_log    = l;
   cb_pipe   = p;
   cb_range  = rg;
+  cb_calib  = cb;
 }
 
 void sg_cli_print_default_help(Print& out) {
@@ -34,6 +36,7 @@ void sg_cli_print_default_help(Print& out) {
   out.println(F("  log error|warn|info|debug"));
   out.println(F("  pipe ...             (pipe on|off/set/show)"));
   out.println(F("  range <cm|2|4|6m>   (ajusta alcance max do radar/pipeline)"));
+  out.println(F("  calib ...            (calib start|status|apply|reset)"));
 }
 
 static void trim(char* s) {
@@ -136,6 +139,15 @@ void sg_cli_poll(Stream& in, Print& out) {
       if (!strcasecmp(cmd, "range") && argc >= 2) {
         uint32_t cm = (uint32_t)strtoul(argv[1], nullptr, 10);
         if (cb_range) cb_range(cm); else out.println(F("[WARN] range: handler not set"));
+        continue;
+      }
+
+      if (!strcasecmp(cmd, "calib")) {
+        if (cb_calib) {
+          cb_calib(argc, argv, out);
+        } else {
+          out.println(F("[WARN] calib: handler not set"));
+        }
         continue;
       }
 

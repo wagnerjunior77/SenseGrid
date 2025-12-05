@@ -1,6 +1,6 @@
 {
   "sensegrid.fqbn": "esp32:esp32:esp32c3",
-  "sensegrid.serialPort": "COM3",
+  "sensegrid.serialPort": "COM5",
   "sensegrid.coreVersion": "3.3.2",
   "C_Cpp.intelliSenseEngine": "default",
   "C_Cpp.default.compilerPath": "${workspaceFolder}/toolchain/arduino-data/packages/esp32/tools/esp-rv32/2302/riscv32-esp-elf/bin/riscv32-esp-elf-gcc.exe",

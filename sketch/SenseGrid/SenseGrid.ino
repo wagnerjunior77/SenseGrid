@@ -10,6 +10,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strings.h>
 
 #include "pins_radar.h"
@@ -18,6 +19,7 @@
 #include "glue/ring_samples_glue.h"
 #include "glue/sg_cli_glue.h"    // sg_cli_set_handlers()/sg_cli_poll()
 #include "glue/sg_pipe_glue.h"   // inclui pipeline e helpers
+#include "glue/sg_calib_glue.h"  // inclui o assistente de calibração
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -220,7 +222,7 @@ static void radar_config_boot() {
 
 // ---------------------- CLI local (assinaturas do sg_cli.h) ----------------------
 static void cli_help(Print& out) {
-  out.println(F("SenseGrid CLI – comandos:"));
+  out.println(F("SenseGrid CLI - comandos:"));
   out.println(F("  help            -> esta ajuda"));
   out.println(F("  info            -> info de build e pinos"));
   out.println(F("  stream on|off   -> liga/desliga streaming"));
@@ -236,9 +238,9 @@ static void cli_help(Print& out) {
   out.println(F("  pipe set speed_thr <cm/s>"));
   out.println(F("  pipe set hold presence|motion|empty <ms>"));
   out.println(F("  pipe set k_ema <0.001..0.2>"));
-  out.println(F("  range 2|4|6     -> alcance max (m) com preset (stream só emite se in-range)"));
+  out.println(F("  range 2|4|6     -> alcance max (m) com preset (stream so emite se in-range)"));
+  out.println(F("  calib start|status|apply|abort|reset|preview|profile save|profile load"));
 }
-
 static void cli_info(Print& out) {
   out.print(F("UART1 RX=")); out.print(SG_RADAR_RX);
   out.print(F(" TX=")); out.print(SG_RADAR_TX);
@@ -350,6 +352,186 @@ static void on_cli_pipe(int argc, char* argv[], Print& out) {
   out.println(F("[pipe] comando invalido"));
 }
 
+// ---------------------- Assistente de calibração ----------------------
+static const char* calib_state_str(SgCalibState st) {
+  switch (st) {
+    case SG_CALIB_IDLE: return "idle";
+    case SG_CALIB_COLLECT: return "collecting";
+    case SG_CALIB_READY: return "ready";
+    case SG_CALIB_APPLIED: return "applied";
+    default: return "?";
+  }
+}
+
+static void print_calib_status(Print& out) {
+  SgCalibMetrics m = sg_calib_metrics(millis());
+  SgCalibSuggest s = sg_calib_build_suggest(g_pipe_params);
+  out.print(F("{\"state\":\"")); out.print(calib_state_str(sg_calib_state())); out.print('"');
+  out.print(F(",\"elapsed_ms\":")); out.print(m.elapsed_ms);
+  out.print(F(",\"target_ms\":")); out.print(m.target_ms);
+  out.print(F(",\"progress\":")); out.print(m.progress, 3);
+  out.print(F(",\"samples\":")); out.print(m.samples_total);
+  out.print(F(",\"valid\":")); out.print(m.samples_valid);
+  out.print(F(",\"valid_ratio\":")); out.print(m.valid_ratio, 3);
+  out.print(F(",\"snr_mean\":")); out.print(m.snr_mean, 4);
+  out.print(F(",\"snr_std\":")); out.print(m.snr_std, 4);
+  out.print(F(",\"dist_p95_cm\":")); out.print(m.dist_p95_cm);
+  out.print(F(",\"suggest\":{"));
+  out.print(F("\"max_range_cm\":")); out.print(s.max_range_cm);
+  out.print(F(",\"snr_min\":")); out.print(s.snr_min, 3);
+  out.print(F(",\"delta_exist\":")); out.print(s.delta_exist, 3);
+  out.print(F(",\"hold_empty_ms\":")); out.print(s.hold_empty_ms);
+  out.print(F(",\"hold_exist_ms\":")); out.print(s.hold_exist_ms);
+  out.print(F(",\"hold_motion_ms\":")); out.print(s.hold_motion_ms);
+  out.print(F(",\"k_ema\":")); out.print(s.k_ema, 4);
+  out.print('}');
+  out.println('}');
+}
+
+static bool calib_profile_name_ok(const char* name) {
+  if (!name) return false;
+  size_t n = strlen(name);
+  if (n == 0 || n > 15) return false;
+  for (size_t i = 0; i < n; ++i) {
+    char c = name[i];
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+              (c >= '0' && c <= '9') || c == '_' || c == '-';
+    if (!ok) return false;
+  }
+  return true;
+}
+
+static bool calib_profile_save(const char* name) {
+  if (!calib_profile_name_ok(name)) return false;
+  Preferences pref;
+  pref.begin("calibpf", false);
+  size_t n = pref.putBytes(name, &g_pipe_params, sizeof(SgParams));
+  pref.end();
+  return n == sizeof(SgParams);
+}
+
+static bool calib_profile_load(const char* name, SgParams& out) {
+  if (!calib_profile_name_ok(name)) return false;
+  Preferences pref;
+  pref.begin("calibpf", true);
+  size_t got = pref.getBytes(name, &out, sizeof(SgParams));
+  pref.end();
+  return got == sizeof(SgParams);
+}
+
+static void calib_preview(Print& out, const SgParams& cur, const SgCalibSuggest& sug) {
+  out.print(F("{\"current\":{"));
+  out.print(F("\"max_range_cm\":")); out.print(cur.max_range_cm);
+  out.print(F(",\"snr_min\":")); out.print(cur.snr_min, 3);
+  out.print(F(",\"delta_exist\":")); out.print(cur.delta_exist, 3);
+  out.print(F(",\"hold_empty_ms\":")); out.print(cur.hold_empty_ms);
+  out.print(F(",\"hold_exist_ms\":")); out.print(cur.hold_exist_ms);
+  out.print(F(",\"hold_motion_ms\":")); out.print(cur.hold_motion_ms);
+  out.print(F(",\"k_ema\":")); out.print(cur.k_ema, 4);
+  out.print(F("},\"suggest\":{"));
+  out.print(F("\"max_range_cm\":")); out.print(sug.max_range_cm);
+  out.print(F(",\"snr_min\":")); out.print(sug.snr_min, 3);
+  out.print(F(",\"delta_exist\":")); out.print(sug.delta_exist, 3);
+  out.print(F(",\"hold_empty_ms\":")); out.print(sug.hold_empty_ms);
+  out.print(F(",\"hold_exist_ms\":")); out.print(sug.hold_exist_ms);
+  out.print(F(",\"hold_motion_ms\":")); out.print(sug.hold_motion_ms);
+  out.print(F(",\"k_ema\":")); out.print(sug.k_ema, 4);
+  out.print(F("}}"));
+  out.println();
+}
+
+static void on_cli_calib(int argc, char* argv[], Print& out) {
+  if (argc < 2) {
+    out.println(F("[calib] uso: calib start [ms] | status | apply | abort | reset | preview | profile save <name> | profile load <name>"));
+    return;
+  }
+  const char* sub = argv[1];
+
+  if (!strcasecmp(sub, "start")) {
+    uint32_t dur = 60000;
+    if (argc >= 3) {
+      if (!parse_uint(argv[2], dur)) { out.println(F("[calib] duracao invalida")); return; }
+    }
+    bool ok = sg_calib_start(dur);
+    if (!ok) {
+      out.println(F("[calib] ja coletando; use calib status/apply/reset"));
+    } else {
+      out.printf("[calib] collecting for %lu ms\n", (unsigned long)dur);
+    }
+    return;
+  }
+
+  if (!strcasecmp(sub, "status")) {
+    print_calib_status(out);
+    return;
+  }
+
+  if (!strcasecmp(sub, "preview")) {
+    SgCalibSuggest s = sg_calib_build_suggest(g_pipe_params);
+    calib_preview(out, g_pipe_params, s);
+    return;
+  }
+
+  if (!strcasecmp(sub, "abort")) {
+    bool ok = sg_calib_abort();
+    out.println(ok ? F("[calib] abortado") : F("[calib] nada para abortar"));
+    return;
+  }
+
+  if (!strcasecmp(sub, "apply")) {
+    if (sg_calib_state() != SG_CALIB_READY && sg_calib_state() != SG_CALIB_APPLIED) {
+      out.println(F("[calib] nada para aplicar (run calib start e aguarde)"));
+      return;
+    }
+    SgCalibSuggest sug = sg_calib_build_suggest(g_pipe_params);
+    calib_preview(out, g_pipe_params, sug);
+    uint16_t old_range = g_pipe_params.max_range_cm;
+    bool ok = sg_calib_apply(&g_pipe_params);
+    if (!ok) { out.println(F("[calib] apply falhou")); return; }
+    sg_pipe_set_params(g_pipe_params);
+    pipe_save(g_pipe_params);
+    sg_pipe_reset_baseline();
+    if (g_pipe_params.max_range_cm != old_range) {
+      g_range_cm = g_pipe_params.max_range_cm;
+      radar_set_presence_max(g_range_cm);
+    }
+    out.println(F("[calib] applied and persisted"));
+    print_calib_status(out);
+    return;
+  }
+
+  if (!strcasecmp(sub, "profile") && argc >= 4) {
+    const char* op = argv[2];
+    const char* name = argv[3];
+    if (!strcasecmp(op, "save")) {
+      if (!calib_profile_save(name)) { out.println(F("[calib] profile save falhou (nome invalido ou NVS)")); return; }
+      out.printf("[calib] profile '%s' salvo\n", name);
+      return;
+    }
+    if (!strcasecmp(op, "load")) {
+      SgParams loaded;
+      if (!calib_profile_load(name, loaded)) { out.println(F("[calib] profile load falhou (nao existe?)")); return; }
+      g_pipe_params = loaded;
+      sg_pipe_set_params(g_pipe_params);
+      pipe_save(g_pipe_params);
+      sg_pipe_reset_baseline();
+      g_range_cm = g_pipe_params.max_range_cm;
+      radar_set_presence_max(g_range_cm);
+      out.printf("[calib] profile '%s' aplicado e persistido\n", name);
+      pipe_show(out);
+      return;
+    }
+  }
+
+  if (!strcasecmp(sub, "reset")) {
+    sg_calib_reset();
+    out.println(F("[calib] reset ok"));
+    return;
+  }
+
+  out.println(F("[calib] comando invalido"));
+}
+
 static void radar_set_presence_max(uint16_t cm) {
   uint8_t frame[10];
   frame[0] = 0x55;
@@ -420,7 +602,8 @@ void setup() {
     /*json  */ on_cli_json,
     /*log   */ on_cli_log,
     /*pipe  */ on_cli_pipe,
-    /*range */ on_cli_range
+    /*range */ on_cli_range,
+    /*calib */ on_cli_calib
   );
 }
 
@@ -449,6 +632,9 @@ void loop() {
       // pipeline (básico)
       SgPipeIn in { p.status, p.distance_cm, p.speed_cms, p.snr, g_last_seen_ms };
       bool in_range = (p.distance_cm > 0 && p.distance_cm <= g_range_cm);
+
+      // calibração: coleta baseline vazio (ou o que estiver configurado)
+      sg_calib_push_sample(in);
 
       if (g_pipe_enabled) {
         g_pipe_out = sg_pipe_step(in);
