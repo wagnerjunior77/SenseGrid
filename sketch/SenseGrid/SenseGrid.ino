@@ -53,6 +53,7 @@ static bool      g_pipe_has_nvs = false;
 static Preferences g_pipe_store;
 static uint16_t  g_range_cm = 200;
 static uint16_t clamp_range_cm(uint32_t cm);
+static const uint32_t PIPE_CFG_VER = 1;
 
 // range gate (2.00 m)
 // timing
@@ -81,6 +82,34 @@ static SgParams pipe_default_params() {
 
 static void pipe_save(const SgParams& p) {
   g_pipe_store.begin("pipe", false);
+  // backup do valor anterior se existir versao
+  if (g_pipe_store.isKey("ver")) {
+    SgParams old;
+    old.max_range_cm   = g_pipe_store.getUInt("dist_max", p.max_range_cm);
+    old.hold_empty_ms  = g_pipe_store.getUInt("hold_e",  p.hold_empty_ms);
+    old.hold_exist_ms  = g_pipe_store.getUInt("hold_p",  p.hold_exist_ms);
+    old.hold_motion_ms = g_pipe_store.getUInt("hold_m",  p.hold_motion_ms);
+    old.snr_on_exist   = g_pipe_store.getFloat("snr_on", p.snr_on_exist);
+    old.snr_off_exist  = g_pipe_store.getFloat("snr_off",p.snr_off_exist);
+    old.snr_min        = g_pipe_store.getFloat("snr_min",p.snr_min);
+    old.snr_move       = g_pipe_store.getFloat("snr_mov",p.snr_move);
+    old.delta_exist    = g_pipe_store.getFloat("delta_ex",p.delta_exist);
+    old.speed_thr_cms  = g_pipe_store.getUInt("spd_thr", p.speed_thr_cms);
+    old.k_ema          = g_pipe_store.getFloat("k_ema",  p.k_ema);
+    g_pipe_store.putBool("b_enabled", g_pipe_store.getBool("enabled", g_pipe_enabled));
+    g_pipe_store.putUInt("b_dist_max", old.max_range_cm);
+    g_pipe_store.putUInt("b_hold_e",   old.hold_empty_ms);
+    g_pipe_store.putUInt("b_hold_p",   old.hold_exist_ms);
+    g_pipe_store.putUInt("b_hold_m",   old.hold_motion_ms);
+    g_pipe_store.putFloat("b_snr_on",  old.snr_on_exist);
+    g_pipe_store.putFloat("b_snr_off", old.snr_off_exist);
+    g_pipe_store.putFloat("b_snr_min", old.snr_min);
+    g_pipe_store.putFloat("b_snr_mov", old.snr_move);
+    g_pipe_store.putFloat("b_delta_ex",old.delta_exist);
+    g_pipe_store.putUInt("b_spd_thr",  old.speed_thr_cms);
+    g_pipe_store.putFloat("b_k_ema",   old.k_ema);
+  }
+  g_pipe_store.putUInt("ver", PIPE_CFG_VER);
   g_pipe_store.putBool("enabled", g_pipe_enabled);
   g_pipe_store.putUInt("dist_max", p.max_range_cm);
   g_pipe_store.putUInt("hold_e",  p.hold_empty_ms);
@@ -100,7 +129,8 @@ static SgParams pipe_load_from_nvs(bool& enabled) {
   SgParams p = pipe_default_params();
   enabled = true;
   g_pipe_store.begin("pipe", true);
-  g_pipe_has_nvs    = g_pipe_store.isKey("dist_max");
+  uint32_t ver      = g_pipe_store.getUInt("ver", 0);
+  g_pipe_has_nvs    = (ver == PIPE_CFG_VER) && g_pipe_store.isKey("dist_max");
   enabled          = g_pipe_store.getBool("enabled", enabled);
   p.max_range_cm   = clamp_range_cm(g_pipe_store.getUInt("dist_max", p.max_range_cm));
   p.hold_empty_ms  = g_pipe_store.getUInt("hold_e",  p.hold_empty_ms);
@@ -117,6 +147,31 @@ static SgParams pipe_load_from_nvs(bool& enabled) {
   g_range_cm = clamp_range_cm(p.max_range_cm);
   p.max_range_cm = g_range_cm;
   return p;
+}
+
+static bool pipe_restore_backup(SgParams& out, bool& enabled) {
+  g_pipe_store.begin("pipe", true);
+  if (!g_pipe_store.isKey("b_dist_max")) { g_pipe_store.end(); return false; }
+  enabled = g_pipe_store.getBool("b_enabled", enabled);
+  out.max_range_cm   = clamp_range_cm(g_pipe_store.getUInt("b_dist_max", out.max_range_cm));
+  out.hold_empty_ms  = g_pipe_store.getUInt("b_hold_e",  out.hold_empty_ms);
+  out.hold_exist_ms  = g_pipe_store.getUInt("b_hold_p",  out.hold_exist_ms);
+  out.hold_motion_ms = g_pipe_store.getUInt("b_hold_m",  out.hold_motion_ms);
+  out.snr_on_exist   = g_pipe_store.getFloat("b_snr_on", out.snr_on_exist);
+  out.snr_off_exist  = g_pipe_store.getFloat("b_snr_off",out.snr_off_exist);
+  out.snr_min        = g_pipe_store.getFloat("b_snr_min",out.snr_min);
+  out.snr_move       = g_pipe_store.getFloat("b_snr_mov",out.snr_move);
+  out.delta_exist    = g_pipe_store.getFloat("b_delta_ex",out.delta_exist);
+  out.speed_thr_cms  = g_pipe_store.getUInt("b_spd_thr", out.speed_thr_cms);
+  out.k_ema          = g_pipe_store.getFloat("b_k_ema",  out.k_ema);
+  g_pipe_store.end();
+  return true;
+}
+
+static void pipe_clear_all() {
+  g_pipe_store.begin("pipe", false);
+  g_pipe_store.clear();
+  g_pipe_store.end();
 }
 
 static void pipe_apply(const SgParams& p) {
@@ -366,6 +421,20 @@ static const char* calib_state_str(SgCalibState st) {
 static void print_calib_status(Print& out) {
   SgCalibMetrics m = sg_calib_metrics(millis());
   SgCalibSuggest s = sg_calib_build_suggest(g_pipe_params);
+  // opcional: log estruturado para calib_report.py consumir
+  Serial.printf("{\"tag\":\"calib\",\"meta\":{\"ts_ms\":%lu,\"state\":\"%s\"},\"metrics\":{\"elapsed_ms\":%u,\"valid_ratio\":%.3f,\"snr_mean\":%.4f,\"snr_std\":%.4f,\"dist_p95_cm\":%u},\"current\":{\"max_range_cm\":%u,\"hold_empty_ms\":%u},\"suggest\":{\"max_range_cm\":%u,\"hold_empty_ms\":%u}}\n",
+    (unsigned long)m.elapsed_ms,
+    calib_state_str(sg_calib_state()),
+    (unsigned)m.elapsed_ms,
+    m.valid_ratio,
+    m.snr_mean,
+    m.snr_std,
+    m.dist_p95_cm,
+    g_pipe_params.max_range_cm,
+    g_pipe_params.hold_empty_ms,
+    s.max_range_cm,
+    s.hold_empty_ms
+  );
   out.print(F("{\"state\":\"")); out.print(calib_state_str(sg_calib_state())); out.print('"');
   out.print(F(",\"elapsed_ms\":")); out.print(m.elapsed_ms);
   out.print(F(",\"target_ms\":")); out.print(m.target_ms);
@@ -442,7 +511,7 @@ static void calib_preview(Print& out, const SgParams& cur, const SgCalibSuggest&
 
 static void on_cli_calib(int argc, char* argv[], Print& out) {
   if (argc < 2) {
-    out.println(F("[calib] uso: calib start [ms] | status | apply | abort | reset | preview | profile save <name> | profile load <name>"));
+    out.println(F("[calib] uso: calib start [ms] | status | apply | abort | reset | factory | preview | rollback | profile save <name> | profile load <name>"));
     return;
   }
   const char* sub = argv[1];
@@ -525,7 +594,35 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
 
   if (!strcasecmp(sub, "reset")) {
     sg_calib_reset();
-    out.println(F("[calib] reset ok"));
+    out.println(F("[calib] reset ok (coleta)"));
+    return;
+  }
+
+  if (!strcasecmp(sub, "factory")) {
+    pipe_clear_all();
+    g_pipe_params = pipe_default_params();
+    g_pipe_enabled = true;
+    pipe_apply(g_pipe_params);
+    sg_pipe_reset_baseline();
+    radar_set_presence_max(g_pipe_params.max_range_cm);
+    out.println(F("[calib] factory reset: params default aplicados e persistidos"));
+    return;
+  }
+
+  if (!strcasecmp(sub, "rollback")) {
+    SgParams bak = g_pipe_params;
+    bool en = g_pipe_enabled;
+    if (!pipe_restore_backup(bak, en)) {
+      out.println(F("[calib] rollback indisponivel (sem backup)"));
+      return;
+    }
+    g_pipe_params = bak;
+    g_pipe_enabled = en;
+    pipe_apply(g_pipe_params);
+    sg_pipe_reset_baseline();
+    radar_set_presence_max(g_pipe_params.max_range_cm);
+    out.println(F("[calib] rollback aplicado a partir do backup"));
+    pipe_show(out);
     return;
   }
 
