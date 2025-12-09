@@ -840,11 +840,23 @@ void setup() {
   unsigned long t0 = millis();
   while (!Serial && (millis() - t0) < 1500) { /* aguarda enumerar */ }
 
-  // AP simples para teste HTTP/WS
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP("SenseGrid", "12345");
+  // AP fechado para teste HTTP/WS
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP("SenseGrid", "esp929305");
   IPAddress apIP = WiFi.softAPIP();
   LOGI("[NET] AP SenseGrid iniciado em %s", apIP.toString().c_str());
+
+  // STA na rede local
+  WiFi.begin("PIZZIOLO_2G", "revil2301revil2301");
+  uint32_t t_sta = millis();
+  while (WiFi.status() != WL_CONNECTED && (millis() - t_sta) < 10000) {
+    delay(200);
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    LOGI("[NET] STA conectado em %s IP=%s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+  } else {
+    LOGW("[NET] STA nao conectou; mantendo apenas AP");
+  }
 
   pinMode(SG_PIN_RADAR_OCC, INPUT_PULLDOWN);
 
