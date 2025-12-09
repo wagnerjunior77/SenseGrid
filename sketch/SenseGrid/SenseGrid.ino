@@ -12,6 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <mbedtls/base64.h>
+#include <mbedtls/sha1.h>
 
 #include "pins_radar.h"
 #include "glue/hal_uart_glue.h"
@@ -20,6 +24,7 @@
 #include "glue/sg_cli_glue.h"    // sg_cli_set_handlers()/sg_cli_poll()
 #include "glue/sg_pipe_glue.h"   // inclui pipeline e helpers
 #include "glue/sg_calib_glue.h"  // inclui o assistente de calibração
+#include "glue/sg_http_glue.h"   // builders de HTTP/WS
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -54,6 +59,20 @@ static Preferences g_pipe_store;
 static uint16_t  g_range_cm = 200;
 static uint16_t clamp_range_cm(uint32_t cm);
 static const uint32_t PIPE_CFG_VER = 1;
+
+// HTTP/WS
+static WebServer g_http_server(80);
+static WiFiServer g_ws_server(81);
+static SgHttpCtx g_http_ctx;
+static char g_device_id[24] = {0};
+static unsigned long g_ws_last_emit = 0;
+static const unsigned long WS_PERIOD_MS = 500;
+
+struct WsConn {
+  WiFiClient client;
+  bool active;
+};
+static WsConn g_ws_conns[4];
 
 // range gate (2.00 m)
 // timing
@@ -657,11 +676,175 @@ static void on_cli_range(uint32_t cm) {
   LOGI("[CLI] range set to %u cm (preset)", (unsigned)target);
 }
 
+// ---------------------- HTTP/WS helpers ----------------------
+static void make_device_id() {
+  uint64_t mac = ESP.getEfuseMac();
+  snprintf(g_device_id, sizeof(g_device_id), "sg-%04X%08X",
+           (uint16_t)(mac >> 32), (uint32_t)mac);
+}
+
+static bool ws_handshake(WiFiClient& c) {
+  const char* magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  char buf[512];
+  int n = c.readBytesUntil('\n', buf, sizeof(buf)-1); // first line
+  if (n <= 0) return false;
+  // read headers
+  String key;
+  while (c.connected()) {
+    String line = c.readStringUntil('\n');
+    if (line.length() == 0 || line == "\r") break;
+    if (line.startsWith("Sec-WebSocket-Key")) {
+      int p = line.indexOf(':');
+      if (p >= 0) {
+        key = line.substring(p+1);
+        key.trim();
+      }
+    }
+  }
+  if (key.length() == 0) return false;
+  String accept_src = key + magic;
+  unsigned char sha_out[20];
+  mbedtls_sha1_context sha;
+  mbedtls_sha1_init(&sha);
+  mbedtls_sha1_starts(&sha);
+  mbedtls_sha1_update(&sha, (const unsigned char*)accept_src.c_str(), accept_src.length());
+  mbedtls_sha1_finish(&sha, sha_out);
+  mbedtls_sha1_free(&sha);
+  unsigned char b64[64];
+  size_t b64_len = 0;
+  mbedtls_base64_encode(b64, sizeof(b64), &b64_len, sha_out, 20);
+  String accept = String((const char*)b64).substring(0, b64_len);
+  c.printf("HTTP/1.1 101 Switching Protocols\r\n");
+  c.printf("Upgrade: websocket\r\n");
+  c.printf("Connection: Upgrade\r\n");
+  c.printf("Sec-WebSocket-Accept: %s\r\n\r\n", accept.c_str());
+  return true;
+}
+
+static void ws_broadcast(const char* msg) {
+  size_t len = strlen(msg);
+  uint8_t hdr[10];
+  size_t hlen = 0;
+  hdr[0] = 0x81; // FIN + text
+  if (len < 126) {
+    hdr[1] = (uint8_t)len;
+    hlen = 2;
+  } else if (len < 65536) {
+    hdr[1] = 126;
+    hdr[2] = (len >> 8) & 0xFF;
+    hdr[3] = len & 0xFF;
+    hlen = 4;
+  } else {
+    return; // too big
+  }
+  for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
+    if (!g_ws_conns[i].active) continue;
+    if (!g_ws_conns[i].client.connected()) { g_ws_conns[i].active=false; continue; }
+    g_ws_conns[i].client.write(hdr, hlen);
+    g_ws_conns[i].client.write((const uint8_t*)msg, len);
+  }
+}
+
+static void ws_accept_clients() {
+  WiFiClient c = g_ws_server.available();
+  if (!c) return;
+  if (!ws_handshake(c)) { c.stop(); return; }
+  for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
+    if (!g_ws_conns[i].active) {
+      g_ws_conns[i].client = c;
+      g_ws_conns[i].active = true;
+      return;
+    }
+  }
+  c.stop(); // no slot
+}
+
+static void http_send_json(const char* json) {
+  g_http_server.send(200, "application/json", json);
+}
+
+static void handle_http_occupancy() {
+  sg_http_next_seq(&g_http_ctx);
+  SgHttpOccupancy occ;
+  occ.ts_ms = millis();
+  occ.state = (int)g_pipe_out.stable;
+  occ.confidence = (g_pipe_out.stable == SG_EMPTY) ? 0.1f : 0.9f;
+  char buf[256];
+  sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
+  http_send_json(buf);
+}
+
+static void handle_http_tracks() {
+  sg_http_next_seq(&g_http_ctx);
+  SgHttpTracks tr;
+  tr.ts_ms = millis();
+  tr.count_active = 0; // placeholder
+  char buf[192];
+  sg_http_make_tracks(&g_http_ctx, &tr, buf, sizeof(buf));
+  http_send_json(buf);
+}
+
+static void handle_http_health() {
+  sg_http_next_seq(&g_http_ctx);
+  SgHttpHealth h;
+  h.ts_ms = millis();
+  h.uptime_s = (uint32_t)(millis() / 1000);
+  h.rssi_dbm = 0;
+  char buf[192];
+  sg_http_make_health(&g_http_ctx, &h, buf, sizeof(buf));
+  http_send_json(buf);
+}
+
+static String read_body() {
+  if (!g_http_server.hasArg("plain")) return String();
+  return g_http_server.arg("plain");
+}
+
+static void handle_http_cmd() {
+  String body = read_body();
+  char txid_buf[32] = {0};
+  const char* txid = "";
+  // parse txid basico (nao robusto)
+  int idx = body.indexOf("\"txid\"");
+  if (idx >= 0) {
+    int q1 = body.indexOf('"', idx + 6);
+    int q2 = body.indexOf('"', q1 + 1);
+    if (q1 >= 0 && q2 > q1) {
+      body.substring(q1 + 1, q2).toCharArray(txid_buf, sizeof(txid_buf));
+      txid = txid_buf;
+    }
+  }
+  sg_http_next_seq(&g_http_ctx);
+  char buf[192];
+  sg_http_make_ack(&g_http_ctx, millis(), txid, 1, buf, sizeof(buf));
+  http_send_json(buf);
+}
+
+static void setup_http_ws() {
+  make_device_id();
+  sg_http_init(&g_http_ctx, g_device_id, 1);
+  g_http_server.on("/v1/occupancy", HTTP_GET, handle_http_occupancy);
+  g_http_server.on("/v1/tracks", HTTP_GET, handle_http_tracks);
+  g_http_server.on("/v1/health", HTTP_GET, handle_http_health);
+  g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
+  g_http_server.begin();
+  g_ws_server.begin();
+  for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
+    g_ws_conns[i].active = false;
+  }
+}
+
 // ---------------------- Setup/Loop ----------------------
 void setup() {
   Serial.begin(115200);
   unsigned long t0 = millis();
   while (!Serial && (millis() - t0) < 1500) { /* aguarda enumerar */ }
+
+  // AP simples para teste HTTP/WS
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("SenseGrid", "12345");
+  IPAddress apIP = WiFi.softAPIP();
+  LOGI("[NET] AP SenseGrid iniciado em %s", apIP.toString().c_str());
 
   pinMode(SG_PIN_RADAR_OCC, INPUT_PULLDOWN);
 
@@ -702,6 +885,8 @@ void setup() {
     /*range */ on_cli_range,
     /*calib */ on_cli_calib
   );
+
+  setup_http_ws();
 }
 
 void loop() {
@@ -795,6 +980,22 @@ void loop() {
   // 4) dreno ring (placeholder)
   SgSample out;
   (void)ring_pop(&g_ring, &out);
+
+  // 5) HTTP/WS
+  g_http_server.handleClient();
+  ws_accept_clients();
+  unsigned long now = millis();
+  if (now - g_ws_last_emit >= WS_PERIOD_MS) {
+    g_ws_last_emit = now;
+    sg_http_next_seq(&g_http_ctx);
+    SgHttpOccupancy occ;
+    occ.ts_ms = now;
+    occ.state = (int)g_pipe_out.stable;
+    occ.confidence = (g_pipe_out.stable == SG_EMPTY) ? 0.1f : 0.9f;
+    char buf[256];
+    sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
+    ws_broadcast(buf);
+  }
 
   delay(2);
 }
