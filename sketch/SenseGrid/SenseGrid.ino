@@ -795,6 +795,30 @@ static void handle_http_health() {
   http_send_json(buf);
 }
 
+static void handle_http_meas() {
+  if (!g_has_last) { g_http_server.send(404, "application/json", "{\"error\":\"no_data\"}"); return; }
+  char buf[256];
+  int n = snprintf(buf, sizeof(buf),
+    "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
+    "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
+    "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
+    (unsigned long)g_last_seen_ms,
+    status_str(g_last.status),
+    g_last.distance_cm * 0.01f,
+    g_last.speed_cms * 0.01f,
+    g_last.snr,
+    g_last.distance_cm,
+    (int)g_last.speed_cms,
+    g_last.signal,
+    (int)g_pipe_out.state,
+    (int)g_pipe_out.stable,
+    (unsigned long)g_pipe_out.stable_ms,
+    (g_last.distance_cm>0 && g_last.distance_cm<=g_range_cm)? "true":"false"
+  );
+  (void)n;
+  g_http_server.send(200, "application/json", buf);
+}
+
 static String read_body() {
   if (!g_http_server.hasArg("plain")) return String();
   return g_http_server.arg("plain");
@@ -826,6 +850,7 @@ static void setup_http_ws() {
   g_http_server.on("/v1/occupancy", HTTP_GET, handle_http_occupancy);
   g_http_server.on("/v1/tracks", HTTP_GET, handle_http_tracks);
   g_http_server.on("/v1/health", HTTP_GET, handle_http_health);
+  g_http_server.on("/v1/meas", HTTP_GET, handle_http_meas);
   g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
   g_http_server.begin();
   g_ws_server.begin();
