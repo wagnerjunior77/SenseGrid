@@ -25,6 +25,7 @@
 #include "glue/sg_pipe_glue.h"   // inclui pipeline e helpers
 #include "glue/sg_calib_glue.h"  // inclui o assistente de calibração
 #include "glue/sg_http_glue.h"   // builders de HTTP/WS
+#include "glue/sg_mqtt_glue.h"
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -73,6 +74,15 @@ struct WsConn {
   bool active;
 };
 static WsConn g_ws_conns[4];
+
+// MQTT
+static const char* MQTT_HOST = "192.168.15.14"; // ajuste conforme broker
+static const uint16_t MQTT_PORT = 1883;
+static const char* MQTT_USER = "";
+static const char* MQTT_PASS = "";
+static const char* SB_REF   = "sb01";
+static bool g_mqtt_enabled = true;
+static bool g_mqtt_was_connected = false;
 
 // range gate (2.00 m)
 // timing
@@ -759,6 +769,72 @@ static void ws_accept_clients() {
   c.stop(); // no slot
 }
 
+// ---------------------- MQTT helpers ----------------------
+static void mqtt_build_meas(char* out, size_t out_sz) {
+  if (!out || out_sz==0 || !g_has_last) { if(out_sz>0) out[0]=0; return; }
+  char payload[256];
+  snprintf(payload, sizeof(payload),
+    "{\"measures\":[{\"sensor\":\"radar\",\"qty\":\"distance\",\"value\":%.2f,\"unit\":\"m\"},"
+    "{\"sensor\":\"radar\",\"qty\":\"speed\",\"value\":%.2f,\"unit\":\"m/s\"},"
+    "{\"sensor\":\"radar\",\"qty\":\"signal\",\"value\":%u,\"unit\":\"au\"}],"
+    "\"status\":%d}",
+    g_last.distance_cm*0.01f,
+    g_last.speed_cms*0.01f,
+    g_last.signal,
+    (int)g_pipe_out.stable);
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, g_last_seen_ms, "meas", payload, out, out_sz);
+}
+
+static void mqtt_build_status(char* out, size_t out_sz) {
+  char payload[128];
+  snprintf(payload, sizeof(payload),
+    "{\"fw\":\"1.0.0\",\"uptime_s\":%lu,\"rssi_dbm\":0}",
+    (unsigned long)(millis()/1000));
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "status", payload, out, out_sz);
+}
+
+static void mqtt_build_cap(char* out, size_t out_sz) {
+  const char* payload = "{\"sensors\":[{\"name\":\"radar\",\"measures\":[\"distance:m\",\"speed:m/s\",\"signal:au\"],\"events\":[\"presence\"]}]}";
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "cap", payload, out, out_sz);
+}
+
+static void mqtt_build_ack(const char* txid, int ok, char* out, size_t out_sz) {
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_make_ack(&g_http_ctx, millis(), txid, ok, out, out_sz);
+}
+
+static void mqtt_build_err(const char* txid, const char* code, const char* msg, char* out, size_t out_sz) {
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_make_err(&g_http_ctx, millis(), txid, code, msg, out, out_sz);
+}
+
+// Parsers simples (sem JSON lib) para cmd MQTT
+static bool json_get_str_key(const char* payload, size_t len, const char* key_with_quotes, char* out, size_t out_sz) {
+  if (!payload || !key_with_quotes || !out || out_sz==0) return false;
+  out[0]=0;
+  const char* p = strstr(payload, key_with_quotes);
+  if (!p) return false;
+  p += strlen(key_with_quotes);
+  const char* start = p;
+  while (*p && *p!='\"' && (size_t)(p-payload)<len) p++;
+  size_t n = (size_t)(p-start);
+  if (n >= out_sz) n = out_sz-1;
+  memcpy(out, start, n); out[n]=0;
+  return true;
+}
+
+static bool json_get_int_key(const char* payload, size_t len, const char* key, uint32_t& out) {
+  if (!payload || !key) return false;
+  const char* p = strstr(payload, key);
+  if (!p) return false;
+  p = strchr(p, ':'); if (!p) return false;
+  p++;
+  out = strtoul(p, NULL, 10);
+  return true;
+}
 static void http_send_json(const char* json) {
   g_http_server.send(200, "application/json", json);
 }
@@ -859,6 +935,54 @@ static void setup_http_ws() {
   }
 }
 
+static void on_mqtt_cmd(const char* payload, size_t len) {
+  if (!payload) return;
+  char txid[32]; json_get_str_key(payload, len, "\"txid\":\"", txid, sizeof(txid));
+  char op[32] = {0};
+  json_get_str_key(payload, len, "\"op\":\"", op, sizeof(op));
+  LOGI("[MQTT cmd] op=%s txid=%s", op, txid);
+  char ackbuf[256], errbuf[256];
+  if (!strcasecmp(op, "calib.start")) {
+    uint32_t dur = 60000;
+    json_get_int_key(payload, len, "dur_ms", dur);
+    if (dur == 0) dur = 60000;
+    bool ok = sg_calib_start(dur);
+    if (ok) {
+      mqtt_build_ack(txid, 1, ackbuf, sizeof(ackbuf));
+      sg_mqtt_pub_ack(ackbuf);
+    } else {
+      mqtt_build_err(txid, "busy", "calib in progress", errbuf, sizeof(errbuf));
+      sg_mqtt_pub_err(errbuf);
+    }
+    return;
+  }
+  if (!strcasecmp(op, "set")) {
+    char path[64];
+    if (!json_get_str_key(payload, len, "\"path\":\"", path, sizeof(path))) {
+      mqtt_build_err(txid, "bad_path", "path missing", errbuf, sizeof(errbuf));
+      sg_mqtt_pub_err(errbuf);
+      return;
+    }
+    if (!strcmp(path, "pipe.dist_max")) {
+      uint32_t v = 0; json_get_int_key(payload, len, "value", v);
+      if (v > 0 && v <= 10) v *= 100;
+      g_pipe_params.max_range_cm = clamp_range_cm(v);
+      g_range_cm = g_pipe_params.max_range_cm;
+      pipe_apply(g_pipe_params);
+      sg_pipe_reset_baseline();
+      radar_set_presence_max(g_range_cm);
+      mqtt_build_ack(txid, 1, ackbuf, sizeof(ackbuf));
+      sg_mqtt_pub_ack(ackbuf);
+      return;
+    }
+    mqtt_build_err(txid, "unknown_path", path, errbuf, sizeof(errbuf));
+    sg_mqtt_pub_err(errbuf);
+    return;
+  }
+  mqtt_build_err(txid, "unknown_op", op, errbuf, sizeof(errbuf));
+  sg_mqtt_pub_err(errbuf);
+}
+
 // ---------------------- Setup/Loop ----------------------
 void setup() {
   Serial.begin(115200);
@@ -924,6 +1048,18 @@ void setup() {
   );
 
   setup_http_ws();
+
+  if (g_mqtt_enabled) {
+    SgMqttCfg cfg;
+    cfg.host = MQTT_HOST;
+    cfg.port = MQTT_PORT;
+    cfg.user = MQTT_USER;
+    cfg.pass = MQTT_PASS;
+    cfg.sb_ref = SB_REF;
+    cfg.device_id = g_device_id;
+    cfg.keepalive_s = 30;
+    sg_mqtt_init(&cfg, on_mqtt_cmd);
+  }
 }
 
 void loop() {
@@ -998,6 +1134,11 @@ void loop() {
           last_emit = now;
         }
       }
+      if (g_mqtt_enabled && sg_mqtt_connected()) {
+        char env[384];
+        mqtt_build_meas(env, sizeof(env));
+        sg_mqtt_pub_meas(env);
+      }
     }
   }
 
@@ -1032,6 +1173,18 @@ void loop() {
     char buf[256];
     sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
     ws_broadcast(buf);
+  }
+
+  // 6) MQTT
+  if (g_mqtt_enabled) {
+    sg_mqtt_loop();
+    bool c = sg_mqtt_connected();
+    if (c && !g_mqtt_was_connected) {
+      char env[384];
+      mqtt_build_cap(env, sizeof(env)); sg_mqtt_pub_cap(env);
+      mqtt_build_status(env, sizeof(env)); sg_mqtt_pub_status(env);
+    }
+    g_mqtt_was_connected = c;
   }
 
   delay(2);

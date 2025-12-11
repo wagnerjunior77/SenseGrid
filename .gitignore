@@ -47,8 +47,15 @@ instructions.md
 Thumbs.db
 *.tmp
 *.log
+*.bak
+*.orig
+*.swp
+*.swo
+__pycache__/
+*.py[cod]
+.vs/
+*.code-workspace
 
 # ---- Outros
-tools
 logs
 
