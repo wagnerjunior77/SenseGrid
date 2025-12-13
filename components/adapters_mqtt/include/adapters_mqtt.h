@@ -25,6 +25,7 @@ bool sg_mqtt_publish(const char* topic_suf, const char* payload, bool retain, ui
 
 // Conveniencias por tipo
 bool sg_mqtt_pub_meas(const char* payload);
+bool sg_mqtt_pub_meas_raw(const char* payload);
 bool sg_mqtt_pub_event(const char* payload);
 bool sg_mqtt_pub_status(const char* payload);
 bool sg_mqtt_pub_cap(const char* payload);

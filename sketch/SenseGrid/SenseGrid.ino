@@ -788,6 +788,27 @@ static void mqtt_build_meas(char* out, size_t out_sz) {
   sg_http_envelope(&g_http_ctx, g_last_seen_ms, "meas", payload, out, out_sz);
 }
 
+static void mqtt_build_meas_raw(char* out, size_t out_sz) {
+  if (!out || out_sz==0 || !g_has_last) { if(out_sz>0) out[0]=0; return; }
+  snprintf(out, out_sz,
+    "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
+    "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
+    "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
+    (unsigned long)g_last_seen_ms,
+    status_str(g_last.status),
+    g_last.distance_cm * 0.01f,
+    g_last.speed_cms * 0.01f,
+    g_last.snr,
+    g_last.distance_cm,
+    (int)g_last.speed_cms,
+    g_last.signal,
+    (int)g_pipe_out.state,
+    (int)g_pipe_out.stable,
+    (unsigned long)g_pipe_out.stable_ms,
+    (g_last.distance_cm>0 && g_last.distance_cm<=g_range_cm)? "true":"false"
+  );
+}
+
 static void mqtt_build_status(char* out, size_t out_sz) {
   char payload[128];
   snprintf(payload, sizeof(payload),
@@ -1257,6 +1278,9 @@ void loop() {
         char env[384];
         mqtt_build_meas(env, sizeof(env));
         sg_mqtt_pub_meas(env);
+        char raw[384];
+        mqtt_build_meas_raw(raw, sizeof(raw));
+        if (raw[0]) sg_mqtt_pub_meas_raw(raw);
         // publish event em transicao de estado
         if (g_pipe_out.stable != g_last_event_state) {
           g_last_event_state = g_pipe_out.stable;

@@ -214,6 +214,7 @@ bool sg_mqtt_publish(const char* topic_suf, const char* payload, bool retain, ui
 }
 
 bool sg_mqtt_pub_meas(const char* payload)   { return sg_mqtt_publish("meas",   payload, false, 0); }
+bool sg_mqtt_pub_meas_raw(const char* payload) { return sg_mqtt_publish("meas_raw", payload, false, 0); }
 bool sg_mqtt_pub_event(const char* payload)  { return sg_mqtt_publish("events", payload, false, 1); }
 bool sg_mqtt_pub_status(const char* payload) { return sg_mqtt_publish("status", payload, true, 1); }
 bool sg_mqtt_pub_cap(const char* payload)    { return sg_mqtt_publish("cap",    payload, true, 1); }
