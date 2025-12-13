@@ -76,13 +76,15 @@ struct WsConn {
 static WsConn g_ws_conns[4];
 
 // MQTT
-static const char* MQTT_HOST = "192.168.15.14"; // ajuste conforme broker
-static const uint16_t MQTT_PORT = 1883;
+static char MQTT_HOST[64] = "192.168.15.9"; // ajuste conforme broker
+static uint16_t MQTT_PORT = 1883;
 static const char* MQTT_USER = "";
 static const char* MQTT_PASS = "";
 static const char* SB_REF   = "sb01";
 static bool g_mqtt_enabled = true;
 static bool g_mqtt_was_connected = false;
+static int g_last_event_state = -1;
+static Preferences g_mqtt_store;
 
 // range gate (2.00 m)
 // timing
@@ -795,6 +797,60 @@ static void mqtt_build_status(char* out, size_t out_sz) {
   sg_http_envelope(&g_http_ctx, millis(), "status", payload, out, out_sz);
 }
 
+static void mqtt_build_dt_meta(char* out, size_t out_sz) {
+  char payload[160];
+  snprintf(payload, sizeof(payload),
+    "{\"device_id\":\"%s\",\"device_model\":\"ESP32-C3\",\"provisioned_at\":0,\"version\":\"1.0.0\",\"last_update\":0,\"ota_enabled\":false}",
+    g_device_id);
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "meta", payload, out, out_sz);
+}
+
+static void mqtt_build_dt_status(char* out, size_t out_sz) {
+  char payload[96];
+  snprintf(payload, sizeof(payload),
+    "{\"device_online\":true,\"last_time_online\":%lu}",
+    (unsigned long)(millis()/1000));
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "st", payload, out, out_sz);
+}
+
+static void mqtt_build_dt_ota(char* out, size_t out_sz) {
+  const char* payload = "{\"ota_status\":\"disabled\",\"last_check\":0}";
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "ota", payload, out, out_sz);
+}
+
+static void mqtt_build_cfg_out(char* out, size_t out_sz) {
+  const char* payload =
+    "{\"meta\":{\"hw_label\":\"Saida 1\",\"type\":\"0x01\"},"
+    "\"settings\":{\"mode\":\"0x01\",\"control_value\":\"0x00\",\"pulse_time\":1000,\"boot_behavior\":\"off\"},"
+    "\"digital_child\":{\"digital_device_id\":\"none\",\"output_function\":\"0x01\"}}";
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "cfg_out", payload, out, out_sz);
+}
+
+static void mqtt_build_cfg_in(char* out, size_t out_sz) {
+  const char* payload =
+    "{\"meta\":{\"hw_label\":\"Entrada 1\",\"type\":\"0x01\"},"
+    "\"settings\":{\"mode\":\"0x01\"},"
+    "\"targets\":{\"target_1\":{\"type\":\"0x10\",\"destination\":\"self:output_1\"}}}";
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "cfg_in", payload, out, out_sz);
+}
+
+static void mqtt_build_out_state(char* out, size_t out_sz) {
+  const char* payload = "{\"state\":false}";
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "o/out/output_1", payload, out, out_sz);
+}
+
+static void mqtt_build_in_state(char* out, size_t out_sz) {
+  const char* payload = "{\"state\":false}";
+  sg_http_next_seq(&g_http_ctx);
+  sg_http_envelope(&g_http_ctx, millis(), "o/in/input_1", payload, out, out_sz);
+}
+
 static void mqtt_build_cap(char* out, size_t out_sz) {
   const char* payload = "{\"sensors\":[{\"name\":\"radar\",\"measures\":[\"distance:m\",\"speed:m/s\",\"signal:au\"],\"events\":[\"presence\"]}]}";
   sg_http_next_seq(&g_http_ctx);
@@ -935,6 +991,22 @@ static void setup_http_ws() {
   }
 }
 
+static void mqtt_save_cfg() {
+  g_mqtt_store.begin("mqtt", false);
+  g_mqtt_store.putString("host", MQTT_HOST);
+  g_mqtt_store.putUInt("port", MQTT_PORT);
+  g_mqtt_store.end();
+}
+
+static void mqtt_load_cfg() {
+  g_mqtt_store.begin("mqtt", true);
+  String h = g_mqtt_store.getString("host", MQTT_HOST);
+  uint32_t p = g_mqtt_store.getUInt("port", MQTT_PORT);
+  g_mqtt_store.end();
+  h.toCharArray(MQTT_HOST, sizeof(MQTT_HOST));
+  MQTT_PORT = (uint16_t)p;
+}
+
 static void on_mqtt_cmd(const char* payload, size_t len) {
   if (!payload) return;
   char txid[32]; json_get_str_key(payload, len, "\"txid\":\"", txid, sizeof(txid));
@@ -983,6 +1055,50 @@ static void on_mqtt_cmd(const char* payload, size_t len) {
   sg_mqtt_pub_err(errbuf);
 }
 
+// MQTT config via CLI
+static void on_cli_mqtt(int argc, char* argv[], Print& out) {
+  if (argc < 2) {
+    out.println(F("[mqtt] uso: mqtt show | host <addr> | port <num> | restart"));
+    return;
+  }
+  const char* sub = argv[1];
+  if (!strcasecmp(sub, "show")) {
+    out.printf("[mqtt] host=%s port=%u\n", MQTT_HOST, (unsigned)MQTT_PORT);
+    return;
+  }
+  if (!strcasecmp(sub, "host") && argc >= 3) {
+    strlcpy(MQTT_HOST, argv[2], sizeof(MQTT_HOST));
+    mqtt_save_cfg();
+    out.printf("[mqtt] host salvo: %s\n", MQTT_HOST);
+    return;
+  }
+  if (!strcasecmp(sub, "port") && argc >= 3) {
+    uint32_t p=0; if (!parse_uint(argv[2], p)) { out.println(F("[mqtt] porta invalida")); return; }
+    MQTT_PORT = (uint16_t)p;
+    mqtt_save_cfg();
+    out.printf("[mqtt] port salvo: %u\n", (unsigned)MQTT_PORT);
+    return;
+  }
+  if (!strcasecmp(sub, "restart")) {
+    mqtt_save_cfg();
+    if (g_mqtt_enabled) {
+      SgMqttCfg cfg;
+      cfg.host = MQTT_HOST;
+      cfg.port = MQTT_PORT;
+      cfg.user = MQTT_USER;
+      cfg.pass = MQTT_PASS;
+      cfg.sb_ref = SB_REF;
+      cfg.device_id = g_device_id;
+      cfg.keepalive_s = 30;
+      sg_mqtt_init(&cfg, on_mqtt_cmd);
+      g_mqtt_was_connected = false;
+    }
+    out.println(F("[mqtt] restart solicitado"));
+    return;
+  }
+  out.println(F("[mqtt] comando invalido"));
+}
+
 // ---------------------- Setup/Loop ----------------------
 void setup() {
   Serial.begin(115200);
@@ -1006,6 +1122,8 @@ void setup() {
   } else {
     LOGW("[NET] STA nao conectou; mantendo apenas AP");
   }
+
+  mqtt_load_cfg();
 
   pinMode(SG_PIN_RADAR_OCC, INPUT_PULLDOWN);
 
@@ -1044,7 +1162,8 @@ void setup() {
     /*log   */ on_cli_log,
     /*pipe  */ on_cli_pipe,
     /*range */ on_cli_range,
-    /*calib */ on_cli_calib
+    /*calib */ on_cli_calib,
+    /*mqtt  */ on_cli_mqtt
   );
 
   setup_http_ws();
@@ -1138,6 +1257,17 @@ void loop() {
         char env[384];
         mqtt_build_meas(env, sizeof(env));
         sg_mqtt_pub_meas(env);
+        // publish event em transicao de estado
+        if (g_pipe_out.stable != g_last_event_state) {
+          g_last_event_state = g_pipe_out.stable;
+          const char* st = (g_last_event_state==0)?"empty":(g_last_event_state==1)?"presence":"motion";
+          char ev[256];
+          char payload[96];
+          snprintf(payload, sizeof(payload), "{\"class\":\"presence.changed\",\"state\":\"%s\"}", st);
+          sg_http_next_seq(&g_http_ctx);
+          sg_http_envelope(&g_http_ctx, g_last_seen_ms, "event", payload, ev, sizeof(ev));
+          sg_mqtt_pub_event(ev);
+        }
       }
     }
   }
@@ -1180,9 +1310,16 @@ void loop() {
     sg_mqtt_loop();
     bool c = sg_mqtt_connected();
     if (c && !g_mqtt_was_connected) {
-      char env[384];
+      char env[512];
       mqtt_build_cap(env, sizeof(env)); sg_mqtt_pub_cap(env);
       mqtt_build_status(env, sizeof(env)); sg_mqtt_pub_status(env);
+      mqtt_build_dt_meta(env, sizeof(env)); sg_mqtt_publish("dt/meta", env, true, 1);
+      mqtt_build_dt_status(env, sizeof(env)); sg_mqtt_publish("dt/st", env, true, 1);
+      mqtt_build_dt_ota(env, sizeof(env)); sg_mqtt_publish("dt/ota", env, true, 1);
+      mqtt_build_cfg_out(env, sizeof(env)); sg_mqtt_publish("dt/cfg/out/output_1", env, true, 1);
+      mqtt_build_cfg_in(env, sizeof(env)); sg_mqtt_publish("dt/cfg/in/input_1", env, true, 1);
+      mqtt_build_out_state(env, sizeof(env)); sg_mqtt_publish("dt/o/out/output_1", env, false, 0);
+      mqtt_build_in_state(env, sizeof(env)); sg_mqtt_publish("dt/o/in/input_1", env, false, 0);
     }
     g_mqtt_was_connected = c;
   }
