@@ -3,23 +3,46 @@
 **Versao:** v0.2 (alinhado ao doc MQTT Dyona - 2025-08-19)  
 **Compatibilidade:** novas adicoes devem ser opcionais (nao quebrar campos existentes).
 
-## Identificadores e topicos
+## Identificadores e envelope padrao
 - `smartbuilding_reference`: codigo do smartplace (configuracao local/NVS).
 - `deviceId`: identificador unico do device (serial/chip-id/config).
+- Envelope (HTTP/MQTT/WS) sempre inclui: `v`, `ts_ms`, `ts_iso`, `device_id`, `seq`, `type`, `payload`.
 
-Padrao de topicos MQTT:
+Exemplo (occupancy):
+```json
+{"v":1,"ts_ms":47161,"ts_iso":"1970-01-01T00:00:47.161Z","device_id":"sg-90120803F784","seq":62,"type":"occupancy","payload":{"count":1,"confidence":0.900}}
 ```
-sp[smartbuilding_reference]/[deviceId]/c                     # comandos para o device
-sp[smartbuilding_reference]/[deviceId]/dt/cfg                # configuracao geral (JSON)
-sp[smartbuilding_reference]/[deviceId]/dt/meta               # informacoes do device
-sp[smartbuilding_reference]/[deviceId]/dt/st                 # status (LWT)
-sp[smartbuilding_reference]/[deviceId]/dt/ota                # status OTA
-sp[smartbuilding_reference]/[deviceId]/dt/o/out/output_1     # estado de output
-sp[smartbuilding_reference]/[deviceId]/dt/o/in/input_1       # estado de input
-sp[smartbuilding_reference]/[deviceId]/dt/cfg/out/output_1   # configuracao de output
-sp[smartbuilding_reference]/[deviceId]/dt/cfg/in/input_1     # configuracao de input
-sp[smartbuilding_reference]/[deviceId]/dt/r/out/output_1     # rotinas do output
+
+## Topicos MQTT (prefixo `sp<sb>/<deviceId>/...`)
 ```
+.../c                        # comandos para o device (JSON)
+.../meas                     # medidas estabilizadas (distance/speed/signal + status)
+.../meas_raw                 # medidas brutas (igual serial JSON)
+.../events                   # eventos de mudanca de estado (presence.changed)
+.../status                   # status basico do device
+.../cap                      # capacidades (sensores/eventos)
+.../ack                      # ack de comandos (qos1)
+.../err                      # erro de comandos (qos1)
+.../dt/meta                  # info do device
+.../dt/st                    # online/offline (pode ser LWT)
+.../dt/ota                   # status OTA
+.../dt/cfg/out/output_1      # configuracao de output
+.../dt/cfg/in/input_1        # configuracao de input
+.../dt/o/out/output_1        # estado de output
+.../dt/o/in/input_1          # estado de input
+.../dt/r/out/output_1        # rotinas programadas do output
+```
+
+## WebSocket (WS)
+- Porta 81 (sem path dedicado), payload igual ao envelope HTTP (occupancy).
+- Conectar em `ws://<ip>:81` e consumir JSON com `type":"occupancy"` e `payload{count,confidence}`.
+
+## HTTP local (resumo)
+- GET `/v1/occupancy` -> envelope + payload {count, confidence}
+- GET `/v1/tracks` -> {active}
+- GET `/v1/health` -> {fw, uptime_s, rssi_dbm}
+- GET `/v1/meas` -> payload completo (dist_m, speed_mps, snr, distance_cm, speed_cms, signal, state, stable, stable_ms, in_range)
+- POST `/v1/cmd` -> placeholder (ack simples, nao executa comando hoje)
 
 ## Campos gerais
 ### Info (dt/meta)
@@ -85,9 +108,13 @@ Topico: `.../dt/cfg/in/input_1`
 - Input:  topico `.../dt/o/in/input_1`  payload `{ "state": false }`
 
 ## Comandos (MQTT)
-- Topico `.../c`: protocolo a definir pelo device (pode usar o envelope REST abaixo ou comandos especificos).
+- Topico `.../c`, payload JSON com `op`:
+  - `set` path+value (ex.: pipe.dist_max)
+  - `calib.start` dur_ms opcional
+  - `calib.abort`
+  - Resposta: `ack` ou `err` (contendo txid).
 
-## REST local (resumo)
+## REST local (opcional/legado)
 Envelope universal:
 ```json
 { "m": "<METHOD>", "e": "<endpoint>", "b": { ... } }
