@@ -32,17 +32,20 @@ echo {"op":"set","path":"pipe.dist_max","value":400,"txid":"t2"} > cmd_set.json
 ```
 2) Publicar:
 ```
-mosquitto_pub -h <broker_ip> -t "spsb01/<device_id>/c" -f cmd_start.json
-mosquitto_pub -h <broker_ip> -t "spsb01/<device_id>/c" -f cmd_set.json
+mosquitto_pub -h <broker_host> -t "spsb01/<device_id>/c" -f cmd_start.json
+mosquitto_pub -h <broker_host> -t "spsb01/<device_id>/c" -f cmd_set.json
 ```
 3) Ouvir respostas (acks/erros):
 ```
-mosquitto_sub -h <broker_ip> -t "spsb01/<device_id>/ack" -t "spsb01/<device_id>/err" -v
+mosquitto_sub -h <broker_host> -t "spsb01/<device_id>/ack" -t "spsb01/<device_id>/err" -v
 ```
 4) Para acompanhar medidas:
 ```
-mosquitto_sub -h <broker_ip> -t "spsb01/<device_id>/meas_raw" -C 5 -v
+mosquitto_sub -h <broker_host> -t "spsb01/<device_id>/meas_raw" -C 5 -v
 ```
+Hint:
+- Se tiver nome configurado (DNS/hosts), use hostname estavel (ex.: broker.sensegrid) para nao depender de IP variavel.
+- Se nao tiver DNS/hosts, use o IP do broker (ex.: `-h 192.168.15.11`). Para hostname local no Windows, pode adicionar em `C:\Windows\System32\drivers\etc\hosts`: `192.168.15.11 broker.sensegrid`.
 
 ## Fluxo via HTTP (consulta)
 - Ocupacao: `curl http://<ip>/v1/occupancy`
