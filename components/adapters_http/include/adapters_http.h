@@ -1,30 +1,13 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "../../serializer/sg_serializer.h"
 
-// Dados basicos para montar envelopes HTTP/WS no formato do contrato_de_dados.md
-typedef struct {
-  const char* device_id;
-  uint32_t    seq;
-  uint8_t     v;        // versao do contrato (ex.: 1)
-} SgHttpCtx;
-
-typedef struct {
-  uint32_t ts_ms;
-  int      state;       // occupancy/confianca podem ser adaptados
-  float    confidence;
-} SgHttpOccupancy;
-
-typedef struct {
-  uint32_t ts_ms;
-  int      count_active;
-} SgHttpTracks;
-
-typedef struct {
-  uint32_t ts_ms;
-  uint32_t uptime_s;
-  int      rssi_dbm;
-} SgHttpHealth;
+// Alias para manter compatibilidade com chamadas existentes
+typedef SgSerCtx        SgHttpCtx;
+typedef SgSerOccupancy  SgHttpOccupancy;
+typedef SgSerTracks     SgHttpTracks;
+typedef SgSerHealth     SgHttpHealth;
 
 // Inicializa contexto (seq inicia em 1)
 void sg_http_init(SgHttpCtx* ctx, const char* device_id, uint8_t contract_version);
