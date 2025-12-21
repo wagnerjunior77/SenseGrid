@@ -8,7 +8,7 @@
 
 ## Visão rápida
 
-Solução de detecção e contagem de ocupação usando radar 24 GHz (ME73MS01) e sensores ambientais (T°/UR/Lux). O firmware roda em ESP32 DevKit, organiza-se por camadas e segue princípios SOLID. O sistema é agnóstico de endpoints: publica dados por MQTT e API HTTP local, mas não controla luz/ar diretamente.
+Solução de detecção e contagem de ocupação usando radar 24 GHz (ME73MS01). O firmware roda em ESP32 DevKit, organiza-se por camadas e segue princípios SOLID. O sistema é agnóstico de endpoints: publica dados por MQTT e API HTTP local, mas não controla luz/ar diretamente.
 
 ---
 
@@ -98,7 +98,7 @@ Presets versionados em `configs/use_cases.v1.0.json` e aplicados em *runtime*.
 
 ## 7. Interfaces Externas
 
-### 7.1 MQTT (tópicos sugeridos)
+### 7.1 MQTT (tópicos exemplo)
 
 **Publica:**  
 `devices/{device_id}/meas` · `…/events` · `…/status` · `…/cap` · `…/kpi`  
@@ -111,7 +111,7 @@ Presets versionados em `configs/use_cases.v1.0.json` e aplicados em *runtime*.
 ### 7.2 HTTP Local
 
 `GET /v1/occupancy` · `GET /v1/tracks` · `GET /v1/health` · `POST /v1/cmd`  
-Payloads idênticos aos do MQTT (ver **Contrato de Payload JSON v0.1**).
+Payloads idênticos aos do MQTT (ver **Contrato de Payload JSON**).
 
 ---
 

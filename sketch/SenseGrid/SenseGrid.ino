@@ -912,7 +912,13 @@ static bool json_get_int_key(const char* payload, size_t len, const char* key, u
   out = strtoul(p, NULL, 10);
   return true;
 }
+static void http_set_cors() {
+  g_http_server.sendHeader("Access-Control-Allow-Origin", "*");
+  g_http_server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  g_http_server.sendHeader("Access-Control-Allow-Headers", "*");
+}
 static void http_send_json(const char* json) {
+  http_set_cors();
   g_http_server.send(200, "application/json", json);
 }
 
@@ -949,7 +955,11 @@ static void handle_http_health() {
 }
 
 static void handle_http_meas() {
-  if (!g_has_last) { g_http_server.send(404, "application/json", "{\"error\":\"no_data\"}"); return; }
+  if (!g_has_last) {
+    http_set_cors();
+    g_http_server.send(404, "application/json", "{\"error\":\"no_data\"}");
+    return;
+  }
   char buf[256];
   int n = snprintf(buf, sizeof(buf),
     "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
@@ -969,7 +979,12 @@ static void handle_http_meas() {
     (g_last.distance_cm>0 && g_last.distance_cm<=g_range_cm)? "true":"false"
   );
   (void)n;
-  g_http_server.send(200, "application/json", buf);
+  http_send_json(buf);
+}
+
+static void handle_http_options() {
+  http_set_cors();
+  g_http_server.send(204);
 }
 
 static String read_body() {
@@ -997,14 +1012,35 @@ static void handle_http_cmd() {
   http_send_json(buf);
 }
 
+static void handle_http_pipe() {
+  http_set_cors();
+  // se vier query ?state=on/off, ajusta
+  if (g_http_server.hasArg("state")) {
+    String st = g_http_server.arg("state");
+    if (st.equalsIgnoreCase("on"))  g_pipe_enabled = true;
+    if (st.equalsIgnoreCase("off")) g_pipe_enabled = false;
+    pipe_save(g_pipe_params);
+  }
+  char buf[64];
+  snprintf(buf, sizeof(buf), "{\"enabled\":%s}", g_pipe_enabled ? "true" : "false");
+  g_http_server.send(200, "application/json", buf);
+}
+
 static void setup_http_ws() {
   make_device_id();
   sg_http_init(&g_http_ctx, g_device_id, 1);
   g_http_server.on("/v1/occupancy", HTTP_GET, handle_http_occupancy);
+  g_http_server.on("/v1/occupancy", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/tracks", HTTP_GET, handle_http_tracks);
+  g_http_server.on("/v1/tracks", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/health", HTTP_GET, handle_http_health);
+  g_http_server.on("/v1/health", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/meas", HTTP_GET, handle_http_meas);
+  g_http_server.on("/v1/meas", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
+  g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/pipe", HTTP_GET, handle_http_pipe);
+  g_http_server.on("/v1/pipe", HTTP_OPTIONS, handle_http_options);
   g_http_server.begin();
   g_ws_server.begin();
   for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
