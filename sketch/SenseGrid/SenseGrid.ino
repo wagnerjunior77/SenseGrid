@@ -912,6 +912,9 @@ static bool json_get_int_key(const char* payload, size_t len, const char* key, u
   out = strtoul(p, NULL, 10);
   return true;
 }
+static String ip_to_str(const IPAddress& ip) {
+  return ip.toString();
+}
 static void http_set_cors() {
   g_http_server.sendHeader("Access-Control-Allow-Origin", "*");
   g_http_server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
@@ -1012,6 +1015,21 @@ static void handle_http_cmd() {
   http_send_json(buf);
 }
 
+static void handle_http_info() {
+  http_set_cors();
+  char buf[192];
+  IPAddress sta = WiFi.localIP();
+  IPAddress ap  = WiFi.softAPIP();
+  const char* ssid = WiFi.SSID().c_str();
+  snprintf(buf, sizeof(buf),
+    "{\"device_id\":\"%s\",\"sta_ip\":\"%s\",\"ap_ip\":\"%s\",\"ssid_sta\":\"%s\"}",
+    g_device_id,
+    ip_to_str(sta).c_str(),
+    ip_to_str(ap).c_str(),
+    ssid ? ssid : "");
+  g_http_server.send(200, "application/json", buf);
+}
+
 static void handle_http_pipe() {
   http_set_cors();
   // se vier query ?state=on/off, ajusta
@@ -1039,6 +1057,8 @@ static void setup_http_ws() {
   g_http_server.on("/v1/meas", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
   g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/info", HTTP_GET, handle_http_info);
+  g_http_server.on("/v1/info", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/pipe", HTTP_GET, handle_http_pipe);
   g_http_server.on("/v1/pipe", HTTP_OPTIONS, handle_http_options);
   g_http_server.begin();
@@ -1179,6 +1199,10 @@ void setup() {
   } else {
     LOGW("[NET] STA nao conectou; mantendo apenas AP");
   }
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  LOGI("[NET] MAC=%02X:%02X:%02X:%02X:%02X:%02X",
+       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
   mqtt_load_cfg();
 

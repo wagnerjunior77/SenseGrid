@@ -40,9 +40,14 @@
       <input type="checkbox" id="pipeToggle" />
       Pipeline on/off
     </label>
+    <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin-left:8px;">
+      <input type="checkbox" id="apMode" />
+      AP (192.168.4.1)
+    </label>
     <div class="row">
       <button id="start">Start</button>
       <button id="stop" class="secondary">Stop</button>
+      <button id="detect" class="secondary">Detect IP</button>
     </div>
     <div id="status" class="badge warn">idle</div>
   </div>
@@ -80,10 +85,12 @@
     const intEl = document.getElementById('interval');
     const fmtEl = document.getElementById('fmt');
     const pipeToggle = document.getElementById('pipeToggle');
+    const apMode = document.getElementById('apMode');
     const statusEl = document.getElementById('status');
     const logEl = document.getElementById('log');
     let timer = null;
     let lastOcc = null, lastHealth = null, lastMeas = null;
+    let lastStaIp = ipEl.value;
 
     function setStatus(text, cls) {
       statusEl.textContent = text;
@@ -92,8 +99,8 @@
 
     function fmt(ts) { return ts ? new Date(ts).toISOString() : '--'; }
 
-    async function fetchJson(path) {
-      const ip = ipEl.value.trim();
+    async function fetchJson(path, hostOverride) {
+      const ip = (hostOverride || ipEl.value || "").trim();
       const url = `http://${ip}${path}`;
       const res = await fetch(url, { cache: 'no-cache' });
       if (!res.ok) throw new Error(res.statusText);
@@ -196,6 +203,14 @@
       renderHealth(lastHealth);
       renderMeas(lastMeas);
     };
+    apMode.onchange = () => {
+      if (apMode.checked) {
+        lastStaIp = ipEl.value.trim() || lastStaIp;
+        ipEl.value = "192.168.4.1";
+      } else {
+        ipEl.value = lastStaIp || "192.168.15.11";
+      }
+    };
     pipeToggle.onchange = async () => {
       try {
         const state = pipeToggle.checked ? 'on' : 'off';
@@ -204,6 +219,30 @@
         setStatus('error', 'err');
         appendLog({ error: e.message });
       }
+    };
+    document.getElementById('detect').onclick = async () => {
+      // tenta current IP, se falhar tenta 192.168.4.1 (AP)
+      const candidates = [];
+      if (ipEl.value) candidates.push(ipEl.value.trim());
+      if (!candidates.includes("192.168.4.1")) candidates.push("192.168.4.1");
+      for (const host of candidates) {
+        try {
+          const info = await fetchJson('/v1/info', host);
+          if (info && info.sta_ip) {
+            ipEl.value = info.sta_ip;
+            setStatus(`detected ${info.sta_ip}`, 'ok');
+            return;
+          }
+          if (info && info.ap_ip) {
+            ipEl.value = info.ap_ip;
+            setStatus(`detected ${info.ap_ip}`, 'ok');
+            return;
+          }
+        } catch (e) {
+          // tenta proximo
+        }
+      }
+      setStatus('detect failed', 'err');
     };
   </script>
 </body>
