@@ -54,7 +54,7 @@ static unsigned long g_stream_period_ms = 50; // ~20 Hz
 // pipeline
 static SgPipeOut g_pipe_out;
 static SgParams  g_pipe_params;
-static bool      g_pipe_enabled = true;
+static bool      g_pipe_enabled = false;
 static bool      g_pipe_has_nvs = false;
 static Preferences g_pipe_store;
 static uint16_t  g_range_cm = 200;
@@ -158,7 +158,7 @@ static void pipe_save(const SgParams& p) {
 
 static SgParams pipe_load_from_nvs(bool& enabled) {
   SgParams p = pipe_default_params();
-  enabled = true;
+  enabled = false;
   g_pipe_store.begin("pipe", true);
   uint32_t ver      = g_pipe_store.getUInt("ver", 0);
   g_pipe_has_nvs    = (ver == PIPE_CFG_VER) && g_pipe_store.isKey("dist_max");
