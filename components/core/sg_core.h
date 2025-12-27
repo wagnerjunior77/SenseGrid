@@ -1,7 +1,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
-#include "../drivers/drv_radar_me73.h"
+#include "../radar/sg_radar_types.h"
 #include "../pipeline/sg_pipe.h"
 #include "../pipeline/sg_calib.h"
 

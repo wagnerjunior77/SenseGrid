@@ -4,36 +4,12 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "../hal/hal_uart.h"
+#include "../radar/sg_radar_types.h"
 
 #ifndef RADAR_SIGNAL_MAX
 // Observado sinal até ~1685; usar 2047.0f dá headroom e evita saturar.
 #define RADAR_SIGNAL_MAX 2047.0f
 #endif
-
-typedef struct RadarRawFrame {
-  uint8_t  data[256];
-  uint16_t size;
-} RadarRawFrame;
-
-typedef struct RadarParsed {
-  // metadados do frame
-  uint8_t  func;
-  uint8_t  cmd1;
-  uint8_t  cmd2;
-  uint8_t  target_id;
-
-  // brutos
-  uint8_t  status;        // 0 none, 1 move, 2 exist (fornecido pelo radar)
-  uint16_t distance_cm;   // cm (BE no firmware observado)
-  int16_t  speed_cms;     // cm/s (BE, signed)
-  int8_t   pitch_deg;     // opcional (se aplicável)
-  uint16_t signal;        // nível relativo (0..~2047/4095)
-
-  // normalizados (SI)
-  float    dist_m;        // m
-  float    speed_mps;     // m/s
-  float    snr;           // 0..1
-} RadarParsed;
 
 typedef struct RadarHandle {
   UartHandle* uart;

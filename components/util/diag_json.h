@@ -1,7 +1,7 @@
 
 #pragma once
 #include <Arduino.h>
-#include "../drivers/drv_radar_me73.h"
+#include "../radar/sg_radar_types.h"
 
 #ifdef __cplusplus
 extern "C" {

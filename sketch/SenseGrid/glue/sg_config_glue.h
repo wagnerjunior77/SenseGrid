@@ -2,3 +2,4 @@
 // Inclui config persistente (NVS helpers)
 #include "../../../components/config/sg_config.cpp"
 #include "../../../components/config/sg_config_pipe.cpp"
+#include "../../../components/config/sg_config_profiles.cpp"

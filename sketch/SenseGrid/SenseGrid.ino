@@ -8,7 +8,6 @@
 //  - Range configurável (2/4/6 m) com preset e checksum calculado
 
 #include <Arduino.h>
-#include <Preferences.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -31,6 +30,7 @@
 #include "glue/sg_core_glue.h"
 #include "sg_core.h"
 #include "../../components/config/sg_config_pipe.h"
+#include "../../components/config/sg_config_profiles.h"
 #include "net_service.h"
 #include "mqtt_config.h"
 
@@ -367,36 +367,12 @@ static void print_calib_status(Print& out) {
   out.println('}');
 }
 
-static bool calib_profile_name_ok(const char* name) {
-  if (!name) return false;
-  size_t n = strlen(name);
-  if (n == 0 || n > 15) return false;
-  for (size_t i = 0; i < n; ++i) {
-    char c = name[i];
-    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-              (c >= '0' && c <= '9') || c == '_' || c == '-';
-    if (!ok) return false;
-  }
-  return true;
-}
-
 static bool calib_profile_save(const char* name) {
-  if (!calib_profile_name_ok(name)) return false;
-  Preferences pref;
-  pref.begin("calibpf", false);
-  const SgParams* cur = sg_core_get_params();
-  size_t n = pref.putBytes(name, cur, sizeof(SgParams));
-  pref.end();
-  return n == sizeof(SgParams);
+  return sg_config_profile_save(name, sg_core_get_params());
 }
 
-static bool calib_profile_load(const char* name, SgParams& out) {
-  if (!calib_profile_name_ok(name)) return false;
-  Preferences pref;
-  pref.begin("calibpf", true);
-  size_t got = pref.getBytes(name, &out, sizeof(SgParams));
-  pref.end();
-  return got == sizeof(SgParams);
+static bool calib_profile_load(const char* name, SgParams* out) {
+  return sg_config_profile_load(name, out);
 }
 
 static void calib_preview(Print& out, const SgParams& cur, const SgCalibSuggest& sug) {
@@ -488,7 +464,7 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
     }
     if (!strcasecmp(op, "load")) {
       SgParams loaded;
-      if (!calib_profile_load(name, loaded)) { out.println(F("[calib] profile load falhou (nao existe?)")); return; }
+      if (!calib_profile_load(name, &loaded)) { out.println(F("[calib] profile load falhou (nao existe?)")); return; }
       sg_core_set_params(&loaded, true);
       sg_core_reset_baseline();
       radar_set_presence_max(sg_core_get_range_cm());
