@@ -27,6 +27,7 @@
 #include "glue/sg_http_glue.h"   // builders de HTTP/WS
 #include "glue/sg_mqtt_glue.h"
 #include "glue/sg_net_glue.h"
+#include "glue/sg_config_glue.h"
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -86,7 +87,6 @@ static const char* SB_REF   = "sb01";
 static bool g_mqtt_enabled = true;
 static bool g_mqtt_was_connected = false;
 static int g_last_event_state = -1;
-static Preferences g_mqtt_store;
 
 // range gate (2.00 m)
 // timing
@@ -1071,19 +1071,20 @@ static void setup_http_ws() {
 }
 
 static void mqtt_save_cfg() {
-  g_mqtt_store.begin("mqtt", false);
-  g_mqtt_store.putString("host", MQTT_HOST);
-  g_mqtt_store.putUInt("port", MQTT_PORT);
-  g_mqtt_store.end();
+  SgMqttCfgStored cfg{};
+  strlcpy(cfg.host, MQTT_HOST, sizeof(cfg.host));
+  cfg.port = MQTT_PORT;
+  sg_config_mqtt_save(&cfg);
 }
 
 static void mqtt_load_cfg() {
-  g_mqtt_store.begin("mqtt", true);
-  String h = g_mqtt_store.getString("host", MQTT_HOST);
-  uint32_t p = g_mqtt_store.getUInt("port", MQTT_PORT);
-  g_mqtt_store.end();
-  h.toCharArray(MQTT_HOST, sizeof(MQTT_HOST));
-  MQTT_PORT = (uint16_t)p;
+  SgMqttCfgStored def{};
+  strlcpy(def.host, MQTT_HOST, sizeof(def.host));
+  def.port = MQTT_PORT;
+  SgMqttCfgStored out{};
+  sg_config_mqtt_load(&out, &def);
+  strlcpy(MQTT_HOST, out.host, sizeof(MQTT_HOST));
+  MQTT_PORT = out.port;
 }
 
 static void on_mqtt_cmd(const char* payload, size_t len) {
