@@ -2,6 +2,7 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include "../hal/hal_uart.h"
 
 #ifndef RADAR_SIGNAL_MAX
@@ -9,12 +10,12 @@
 #define RADAR_SIGNAL_MAX 2047.0f
 #endif
 
-struct RadarRawFrame {
+typedef struct RadarRawFrame {
   uint8_t  data[256];
   uint16_t size;
-};
+} RadarRawFrame;
 
-struct RadarParsed {
+typedef struct RadarParsed {
   // metadados do frame
   uint8_t  func;
   uint8_t  cmd1;
@@ -32,11 +33,11 @@ struct RadarParsed {
   float    dist_m;        // m
   float    speed_mps;     // m/s
   float    snr;           // 0..1
-};
+} RadarParsed;
 
-struct RadarHandle {
+typedef struct RadarHandle {
   UartHandle* uart;
-};
+} RadarHandle;
 
 bool radar_begin(RadarHandle* r, UartHandle* uart);
 bool radar_read_raw(RadarHandle* r, RadarRawFrame* out, uint32_t timeout_ms);

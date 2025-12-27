@@ -28,6 +28,11 @@
 #include "glue/sg_mqtt_glue.h"
 #include "glue/sg_net_glue.h"
 #include "glue/sg_config_glue.h"
+#include "glue/sg_core_glue.h"
+#include "sg_core.h"
+#include "../../components/config/sg_config_pipe.h"
+#include "net_service.h"
+#include "mqtt_config.h"
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -53,15 +58,8 @@ static bool  g_stream = true;           // liga stream por padrão para logging
 static bool  g_stream_json = true;
 static unsigned long g_stream_period_ms = 50; // ~20 Hz
 
-// pipeline
-static SgPipeOut g_pipe_out;
-static SgParams  g_pipe_params;
-static bool      g_pipe_enabled = false;
-static bool      g_pipe_has_nvs = false;
-static Preferences g_pipe_store;
-static uint16_t  g_range_cm = 200;
-static uint16_t clamp_range_cm(uint32_t cm);
-static const uint32_t PIPE_CFG_VER = 1;
+// core/pipeline
+static SgCoreSnapshot g_core_snap;
 
 // HTTP/WS
 static WebServer g_http_server(80);
@@ -87,6 +85,7 @@ static const char* SB_REF   = "sb01";
 static bool g_mqtt_enabled = true;
 static bool g_mqtt_was_connected = false;
 static int g_last_event_state = -1;
+static MqttRuntimeCfg g_mqtt_cfg{};
 
 // range gate (2.00 m)
 // timing
@@ -96,127 +95,32 @@ static const uint32_t STALE_MS       = 3000;
 // warm-up pós config
 static uint32_t g_after_cfg_ms = 0;
 
-// ---------------------- Pipeline config persistente ----------------------
-static SgParams pipe_default_params() {
-  SgParams p;
-  p.max_range_cm   = g_range_cm;
-  p.hold_empty_ms  = 600;
-  p.hold_exist_ms  = 250;
-  p.hold_motion_ms = 150;
-  p.snr_on_exist   = 0.10f;
-  p.snr_off_exist  = 0.05f;
-  p.snr_min        = 0.05f;
-  p.snr_move       = 0.15f;
-  p.delta_exist    = 0.05f;
-  p.speed_thr_cms  = 5;
-  p.k_ema          = 0.02f;
-  return p;
-}
-
-static void pipe_save(const SgParams& p) {
-  g_pipe_store.begin("pipe", false);
-  // backup do valor anterior se existir versao
-  if (g_pipe_store.isKey("ver")) {
-    SgParams old;
-    old.max_range_cm   = g_pipe_store.getUInt("dist_max", p.max_range_cm);
-    old.hold_empty_ms  = g_pipe_store.getUInt("hold_e",  p.hold_empty_ms);
-    old.hold_exist_ms  = g_pipe_store.getUInt("hold_p",  p.hold_exist_ms);
-    old.hold_motion_ms = g_pipe_store.getUInt("hold_m",  p.hold_motion_ms);
-    old.snr_on_exist   = g_pipe_store.getFloat("snr_on", p.snr_on_exist);
-    old.snr_off_exist  = g_pipe_store.getFloat("snr_off",p.snr_off_exist);
-    old.snr_min        = g_pipe_store.getFloat("snr_min",p.snr_min);
-    old.snr_move       = g_pipe_store.getFloat("snr_mov",p.snr_move);
-    old.delta_exist    = g_pipe_store.getFloat("delta_ex",p.delta_exist);
-    old.speed_thr_cms  = g_pipe_store.getUInt("spd_thr", p.speed_thr_cms);
-    old.k_ema          = g_pipe_store.getFloat("k_ema",  p.k_ema);
-    g_pipe_store.putBool("b_enabled", g_pipe_store.getBool("enabled", g_pipe_enabled));
-    g_pipe_store.putUInt("b_dist_max", old.max_range_cm);
-    g_pipe_store.putUInt("b_hold_e",   old.hold_empty_ms);
-    g_pipe_store.putUInt("b_hold_p",   old.hold_exist_ms);
-    g_pipe_store.putUInt("b_hold_m",   old.hold_motion_ms);
-    g_pipe_store.putFloat("b_snr_on",  old.snr_on_exist);
-    g_pipe_store.putFloat("b_snr_off", old.snr_off_exist);
-    g_pipe_store.putFloat("b_snr_min", old.snr_min);
-    g_pipe_store.putFloat("b_snr_mov", old.snr_move);
-    g_pipe_store.putFloat("b_delta_ex",old.delta_exist);
-    g_pipe_store.putUInt("b_spd_thr",  old.speed_thr_cms);
-    g_pipe_store.putFloat("b_k_ema",   old.k_ema);
-  }
-  g_pipe_store.putUInt("ver", PIPE_CFG_VER);
-  g_pipe_store.putBool("enabled", g_pipe_enabled);
-  g_pipe_store.putUInt("dist_max", p.max_range_cm);
-  g_pipe_store.putUInt("hold_e",  p.hold_empty_ms);
-  g_pipe_store.putUInt("hold_p",  p.hold_exist_ms);
-  g_pipe_store.putUInt("hold_m",  p.hold_motion_ms);
-  g_pipe_store.putFloat("snr_on", p.snr_on_exist);
-  g_pipe_store.putFloat("snr_off",p.snr_off_exist);
-  g_pipe_store.putFloat("snr_min",p.snr_min);
-  g_pipe_store.putFloat("snr_mov",p.snr_move);
-  g_pipe_store.putFloat("delta_ex",p.delta_exist);
-  g_pipe_store.putUInt("spd_thr", p.speed_thr_cms);
-  g_pipe_store.putFloat("k_ema",  p.k_ema);
-  g_pipe_store.end();
-}
-
-static SgParams pipe_load_from_nvs(bool& enabled) {
-  SgParams p = pipe_default_params();
-  enabled = false;
-  g_pipe_store.begin("pipe", true);
-  uint32_t ver      = g_pipe_store.getUInt("ver", 0);
-  g_pipe_has_nvs    = (ver == PIPE_CFG_VER) && g_pipe_store.isKey("dist_max");
-  enabled          = g_pipe_store.getBool("enabled", enabled);
-  p.max_range_cm   = clamp_range_cm(g_pipe_store.getUInt("dist_max", p.max_range_cm));
-  p.hold_empty_ms  = g_pipe_store.getUInt("hold_e",  p.hold_empty_ms);
-  p.hold_exist_ms  = g_pipe_store.getUInt("hold_p",  p.hold_exist_ms);
-  p.hold_motion_ms = g_pipe_store.getUInt("hold_m",  p.hold_motion_ms);
-  p.snr_on_exist   = g_pipe_store.getFloat("snr_on", p.snr_on_exist);
-  p.snr_off_exist  = g_pipe_store.getFloat("snr_off",p.snr_off_exist);
-  p.snr_min        = g_pipe_store.getFloat("snr_min",p.snr_min);
-  p.snr_move       = g_pipe_store.getFloat("snr_mov",p.snr_move);
-  p.delta_exist    = g_pipe_store.getFloat("delta_ex",p.delta_exist);
-  p.speed_thr_cms  = g_pipe_store.getUInt("spd_thr", p.speed_thr_cms);
-  p.k_ema          = g_pipe_store.getFloat("k_ema", p.k_ema);
-  g_pipe_store.end();
-  g_range_cm = clamp_range_cm(p.max_range_cm);
-  p.max_range_cm = g_range_cm;
-  return p;
-}
-
-static bool pipe_restore_backup(SgParams& out, bool& enabled) {
-  g_pipe_store.begin("pipe", true);
-  if (!g_pipe_store.isKey("b_dist_max")) { g_pipe_store.end(); return false; }
-  enabled = g_pipe_store.getBool("b_enabled", enabled);
-  out.max_range_cm   = clamp_range_cm(g_pipe_store.getUInt("b_dist_max", out.max_range_cm));
-  out.hold_empty_ms  = g_pipe_store.getUInt("b_hold_e",  out.hold_empty_ms);
-  out.hold_exist_ms  = g_pipe_store.getUInt("b_hold_p",  out.hold_exist_ms);
-  out.hold_motion_ms = g_pipe_store.getUInt("b_hold_m",  out.hold_motion_ms);
-  out.snr_on_exist   = g_pipe_store.getFloat("b_snr_on", out.snr_on_exist);
-  out.snr_off_exist  = g_pipe_store.getFloat("b_snr_off",out.snr_off_exist);
-  out.snr_min        = g_pipe_store.getFloat("b_snr_min",out.snr_min);
-  out.snr_move       = g_pipe_store.getFloat("b_snr_mov",out.snr_move);
-  out.delta_exist    = g_pipe_store.getFloat("b_delta_ex",out.delta_exist);
-  out.speed_thr_cms  = g_pipe_store.getUInt("b_spd_thr", out.speed_thr_cms);
-  out.k_ema          = g_pipe_store.getFloat("b_k_ema",  out.k_ema);
-  g_pipe_store.end();
-  return true;
-}
-
-static void pipe_clear_all() {
-  g_pipe_store.begin("pipe", false);
-  g_pipe_store.clear();
-  g_pipe_store.end();
-}
-
-static void pipe_apply(const SgParams& p) {
-  g_pipe_params = p;
-  sg_pipe_set_params(p);
-  pipe_save(p);
-}
-
+// ---------------------- Pipeline helpers/persistência ----------------------
 static float clamp01(float v) {
   if (v < 0.0f) return 0.0f;
   if (v > 1.0f) return 1.0f;
   return v;
+}
+
+static void pipe_show(Print& out) {
+  SgParams stored = *sg_core_get_params();
+  bool enabled = sg_core_pipe_enabled();
+  bool has_nvs = false;
+  sg_config_pipe_load(&stored, &enabled, &has_nvs);
+  out.print(F("{\"enabled\":")); out.print(enabled ? F("true") : F("false"));
+  out.print(F(",\"dist_max_cm\":")); out.print(stored.max_range_cm);
+  out.print(F(",\"hold_ms\":{\"empty\":")); out.print(stored.hold_empty_ms);
+  out.print(F(",\"presence\":")); out.print(stored.hold_exist_ms);
+  out.print(F(",\"motion\":")); out.print(stored.hold_motion_ms);
+  out.print(F("}"));
+  out.print(F(",\"snr_on_exist\":")); out.print(stored.snr_on_exist, 3);
+  out.print(F(",\"snr_off_exist\":")); out.print(stored.snr_off_exist, 3);
+  out.print(F(",\"snr_min\":")); out.print(stored.snr_min, 3);
+  out.print(F(",\"snr_move\":")); out.print(stored.snr_move, 3);
+  out.print(F(",\"delta_exist\":")); out.print(stored.delta_exist, 3);
+  out.print(F(",\"speed_thr_cms\":")); out.print(stored.speed_thr_cms);
+  out.print(F(",\"k_ema\":")); out.print(stored.k_ema, 4);
+  out.println('}');
 }
 
 // ---------------------- Helpers ----------------------
@@ -261,32 +165,13 @@ static void print_json(const RadarParsed& p, const SgPipeOut& o) {
       dist_m, speed_ms, snr01,
       p.distance_cm, (int)p.speed_cms, p.signal,
       (int)o.state, (int)o.stable, (unsigned long)o.stable_ms,
-      (p.distance_cm>0 && p.distance_cm<=g_range_cm)? "true":"false"
+      (p.distance_cm>0 && p.distance_cm<=sg_core_get_range_cm())? "true":"false"
     );
   } else {
     Serial.printf("[PARSED] status=%s dist=%ucm signal=%u  state=%d stable=%d t=%lu\n",
                   status_str(p.status), p.distance_cm, p.signal,
                   (int)o.state, (int)o.stable, (unsigned long)millis());
   }
-}
-
-static void pipe_show(Print& out) {
-  bool enabled = g_pipe_enabled;
-  SgParams stored = pipe_load_from_nvs(enabled);
-  out.print(F("{\"enabled\":")); out.print(enabled ? F("true") : F("false"));
-  out.print(F(",\"dist_max_cm\":")); out.print(stored.max_range_cm);
-  out.print(F(",\"hold_ms\":{\"empty\":")); out.print(stored.hold_empty_ms);
-  out.print(F(",\"presence\":")); out.print(stored.hold_exist_ms);
-  out.print(F(",\"motion\":")); out.print(stored.hold_motion_ms);
-  out.print(F("}"));
-  out.print(F(",\"snr_on_exist\":")); out.print(stored.snr_on_exist, 3);
-  out.print(F(",\"snr_off_exist\":")); out.print(stored.snr_off_exist, 3);
-  out.print(F(",\"snr_min\":")); out.print(stored.snr_min, 3);
-  out.print(F(",\"snr_move\":")); out.print(stored.snr_move, 3);
-  out.print(F(",\"delta_exist\":")); out.print(stored.delta_exist, 3);
-  out.print(F(",\"speed_thr_cms\":")); out.print(stored.speed_thr_cms);
-  out.print(F(",\"k_ema\":")); out.print(stored.k_ema, 4);
-  out.println('}');
 }
 
 // ---------------------- Config do radar no boot ----------------------
@@ -299,8 +184,8 @@ static void radar_config_boot() {
   LOGI("[CFG] VO hold = 3000 ms");
   radar_send(SET_VO_HOLD_3S, sizeof(SET_VO_HOLD_3S));
 
-  LOGI("[CFG] Presence max = %u cm", (unsigned)g_range_cm);
-  radar_set_presence_max(g_range_cm);
+  LOGI("[CFG] Presence max = %u cm", (unsigned)sg_core_get_range_cm());
+  radar_set_presence_max(sg_core_get_range_cm());
 
   LOGI("[CFG] Save all");
   radar_send(SAVE_ALL, sizeof(SAVE_ALL));
@@ -334,7 +219,7 @@ static void cli_info(Print& out) {
   out.print(F(" TX=")); out.print(SG_RADAR_TX);
   out.print(F(" @")); out.println(SG_RADAR_BAUD);
   out.print(F("OCC pin=")); out.println(SG_PIN_RADAR_OCC);
-  out.print(F("Range (max presence)=")); out.print(g_range_cm); out.println(F(" cm"));
+  out.print(F("Range (max presence)=")); out.print(sg_core_get_range_cm()); out.println(F(" cm"));
 }
 
 static void on_cli_stream(bool enable) { g_stream = enable; LOGI("[CLI] stream %s", enable ? "on" : "off"); }
@@ -362,23 +247,14 @@ static bool parse_uint(const char* s, uint32_t& out) {
   return true;
 }
 
-static uint16_t clamp_range_cm(uint32_t cm) {
-  // Se veio em metros (ex.: 2,4,6) converte
-  if (cm > 0 && cm <= 10) cm *= 100;
-  // Três presets: 200/400/600 cm
-  if (cm <= 250) return 200;
-  if (cm <= 500) return 400;
-  return 600;
-}
-
 static void on_cli_pipe(int argc, char* argv[], Print& out) {
   if (argc < 2) { out.println(F("[pipe] argumentos insuficientes")); return; }
   const char* sub = argv[1];
 
   if (!strcasecmp(sub, "on") || !strcasecmp(sub, "off")) {
-    g_pipe_enabled = !strcasecmp(sub, "on");
-    pipe_save(g_pipe_params);
-    out.printf("[pipe] %s\n", g_pipe_enabled ? "on" : "off");
+    bool on = !strcasecmp(sub, "on");
+    sg_core_set_pipe_enabled(on, true);
+    out.printf("[pipe] %s\n", on ? "on" : "off");
     return;
   }
 
@@ -393,45 +269,45 @@ static void on_cli_pipe(int argc, char* argv[], Print& out) {
     const char* val = argv[3];
     bool changed = true;
     bool range_changed = false;
+    SgParams params = *sg_core_get_params();
 
-  if (!strcasecmp(key, "dist_max")) {
-    uint32_t v=0; if (!parse_uint(val, v)) { out.println(F("[pipe] dist_max invalido")); return; }
-    if (v > 0 && v <= 10) v *= 100; // aceita metros
-    g_pipe_params.max_range_cm = clamp_range_cm(v);
-    g_range_cm = g_pipe_params.max_range_cm;
-    range_changed = true;
-  } else if (!strcasecmp(key, "snr_min")) {
+    if (!strcasecmp(key, "dist_max")) {
+      uint32_t v=0; if (!parse_uint(val, v)) { out.println(F("[pipe] dist_max invalido")); return; }
+      params.max_range_cm = (uint16_t)v;
+      range_changed = true;
+    } else if (!strcasecmp(key, "snr_min")) {
       float v=0; if (!parse_float(val, v)) { out.println(F("[pipe] snr_min invalido")); return; }
-      g_pipe_params.snr_min = clamp01(v);
+      params.snr_min = clamp01(v);
     } else if (!strcasecmp(key, "snr_move")) {
       float v=0; if (!parse_float(val, v)) { out.println(F("[pipe] snr_move invalido")); return; }
-      g_pipe_params.snr_move = clamp01(v);
+      params.snr_move = clamp01(v);
     } else if (!strcasecmp(key, "delta_exist")) {
       float v=0; if (!parse_float(val, v)) { out.println(F("[pipe] delta_exist invalido")); return; }
-      g_pipe_params.delta_exist = constrain(v, 0.0f, 1.0f);
+      params.delta_exist = constrain(v, 0.0f, 1.0f);
     } else if (!strcasecmp(key, "speed_thr")) {
       uint32_t v=0; if (!parse_uint(val, v)) { out.println(F("[pipe] speed_thr invalido")); return; }
-      g_pipe_params.speed_thr_cms = (uint16_t)min<uint32_t>(v, 2000);
+      params.speed_thr_cms = (uint16_t)min<uint32_t>(v, 2000);
     } else if (!strcasecmp(key, "hold") && argc >= 5) {
       const char* which = argv[3];
       const char* vstr  = argv[4];
       uint32_t v=0; if (!parse_uint(vstr, v)) { out.println(F("[pipe] hold invalido")); return; }
-      if (!strcasecmp(which, "presence")) g_pipe_params.hold_exist_ms  = (uint16_t)min<uint32_t>(v, 10000);
-      else if (!strcasecmp(which, "motion")) g_pipe_params.hold_motion_ms = (uint16_t)min<uint32_t>(v, 10000);
-      else if (!strcasecmp(which, "empty"))  g_pipe_params.hold_empty_ms  = (uint16_t)min<uint32_t>(v, 20000);
+      if (!strcasecmp(which, "presence")) params.hold_exist_ms  = (uint16_t)min<uint32_t>(v, 10000);
+      else if (!strcasecmp(which, "motion")) params.hold_motion_ms = (uint16_t)min<uint32_t>(v, 10000);
+      else if (!strcasecmp(which, "empty"))  params.hold_empty_ms  = (uint16_t)min<uint32_t>(v, 20000);
       else { out.println(F("[pipe] hold alvo invalido (presence|motion|empty)")); return; }
     } else if (!strcasecmp(key, "k_ema")) {
       float v=0; if (!parse_float(val, v)) { out.println(F("[pipe] k_ema invalido")); return; }
-      g_pipe_params.k_ema = constrain(v, 0.001f, 0.2f);
+      params.k_ema = constrain(v, 0.001f, 0.2f);
     } else {
       changed = false;
     }
 
     if (!changed) { out.println(F("[pipe] chave desconhecida")); return; }
-    pipe_apply(g_pipe_params);
+    sg_core_set_params(&params, true);
     if (range_changed) {
-      sg_pipe_reset_baseline();
-      radar_set_presence_max(g_range_cm);
+      sg_core_reset_baseline();
+      radar_set_presence_max(sg_core_get_range_cm());
+      g_after_cfg_ms = millis() + 1000;
     }
     out.println(F("[pipe] ok"));
     return;
@@ -452,23 +328,24 @@ static const char* calib_state_str(SgCalibState st) {
 }
 
 static void print_calib_status(Print& out) {
-  SgCalibMetrics m = sg_calib_metrics(millis());
-  SgCalibSuggest s = sg_calib_build_suggest(g_pipe_params);
+  SgCalibMetrics m = sg_core_calib_metrics(millis());
+  SgCalibSuggest s = sg_core_calib_suggest();
+  const SgParams* cur = sg_core_get_params();
   // opcional: log estruturado para calib_report.py consumir
   Serial.printf("{\"tag\":\"calib\",\"meta\":{\"ts_ms\":%lu,\"state\":\"%s\"},\"metrics\":{\"elapsed_ms\":%u,\"valid_ratio\":%.3f,\"snr_mean\":%.4f,\"snr_std\":%.4f,\"dist_p95_cm\":%u},\"current\":{\"max_range_cm\":%u,\"hold_empty_ms\":%u},\"suggest\":{\"max_range_cm\":%u,\"hold_empty_ms\":%u}}\n",
     (unsigned long)m.elapsed_ms,
-    calib_state_str(sg_calib_state()),
+    calib_state_str(sg_core_calib_state()),
     (unsigned)m.elapsed_ms,
     m.valid_ratio,
     m.snr_mean,
     m.snr_std,
     m.dist_p95_cm,
-    g_pipe_params.max_range_cm,
-    g_pipe_params.hold_empty_ms,
+    cur->max_range_cm,
+    cur->hold_empty_ms,
     s.max_range_cm,
     s.hold_empty_ms
   );
-  out.print(F("{\"state\":\"")); out.print(calib_state_str(sg_calib_state())); out.print('"');
+  out.print(F("{\"state\":\"")); out.print(calib_state_str(sg_core_calib_state())); out.print('"');
   out.print(F(",\"elapsed_ms\":")); out.print(m.elapsed_ms);
   out.print(F(",\"target_ms\":")); out.print(m.target_ms);
   out.print(F(",\"progress\":")); out.print(m.progress, 3);
@@ -507,7 +384,8 @@ static bool calib_profile_save(const char* name) {
   if (!calib_profile_name_ok(name)) return false;
   Preferences pref;
   pref.begin("calibpf", false);
-  size_t n = pref.putBytes(name, &g_pipe_params, sizeof(SgParams));
+  const SgParams* cur = sg_core_get_params();
+  size_t n = pref.putBytes(name, cur, sizeof(SgParams));
   pref.end();
   return n == sizeof(SgParams);
 }
@@ -554,7 +432,7 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
     if (argc >= 3) {
       if (!parse_uint(argv[2], dur)) { out.println(F("[calib] duracao invalida")); return; }
     }
-    bool ok = sg_calib_start(dur);
+    bool ok = sg_core_calib_start(dur);
     if (!ok) {
       out.println(F("[calib] ja coletando; use calib status/apply/reset"));
     } else {
@@ -569,33 +447,31 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
   }
 
   if (!strcasecmp(sub, "preview")) {
-    SgCalibSuggest s = sg_calib_build_suggest(g_pipe_params);
-    calib_preview(out, g_pipe_params, s);
+    SgCalibSuggest s = sg_core_calib_suggest();
+    calib_preview(out, *sg_core_get_params(), s);
     return;
   }
 
   if (!strcasecmp(sub, "abort")) {
-    bool ok = sg_calib_abort();
+    bool ok = sg_core_calib_abort();
     out.println(ok ? F("[calib] abortado") : F("[calib] nada para abortar"));
     return;
   }
 
   if (!strcasecmp(sub, "apply")) {
-    if (sg_calib_state() != SG_CALIB_READY && sg_calib_state() != SG_CALIB_APPLIED) {
+    if (sg_core_calib_state() != SG_CALIB_READY && sg_core_calib_state() != SG_CALIB_APPLIED) {
       out.println(F("[calib] nada para aplicar (run calib start e aguarde)"));
       return;
     }
-    SgCalibSuggest sug = sg_calib_build_suggest(g_pipe_params);
-    calib_preview(out, g_pipe_params, sug);
-    uint16_t old_range = g_pipe_params.max_range_cm;
-    bool ok = sg_calib_apply(&g_pipe_params);
+    SgCalibSuggest sug = sg_core_calib_suggest();
+    calib_preview(out, *sg_core_get_params(), sug);
+    uint16_t old_range = sg_core_get_range_cm();
+    bool ok = sg_core_calib_apply(true);
     if (!ok) { out.println(F("[calib] apply falhou")); return; }
-    sg_pipe_set_params(g_pipe_params);
-    pipe_save(g_pipe_params);
-    sg_pipe_reset_baseline();
-    if (g_pipe_params.max_range_cm != old_range) {
-      g_range_cm = g_pipe_params.max_range_cm;
-      radar_set_presence_max(g_range_cm);
+    sg_core_reset_baseline();
+    if (sg_core_get_range_cm() != old_range) {
+      radar_set_presence_max(sg_core_get_range_cm());
+      g_after_cfg_ms = millis() + 1000;
     }
     out.println(F("[calib] applied and persisted"));
     print_calib_status(out);
@@ -613,12 +489,10 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
     if (!strcasecmp(op, "load")) {
       SgParams loaded;
       if (!calib_profile_load(name, loaded)) { out.println(F("[calib] profile load falhou (nao existe?)")); return; }
-      g_pipe_params = loaded;
-      sg_pipe_set_params(g_pipe_params);
-      pipe_save(g_pipe_params);
-      sg_pipe_reset_baseline();
-      g_range_cm = g_pipe_params.max_range_cm;
-      radar_set_presence_max(g_range_cm);
+      sg_core_set_params(&loaded, true);
+      sg_core_reset_baseline();
+      radar_set_presence_max(sg_core_get_range_cm());
+      g_after_cfg_ms = millis() + 1000;
       out.printf("[calib] profile '%s' aplicado e persistido\n", name);
       pipe_show(out);
       return;
@@ -626,34 +500,35 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
   }
 
   if (!strcasecmp(sub, "reset")) {
-    sg_calib_reset();
+    sg_core_calib_reset();
     out.println(F("[calib] reset ok (coleta)"));
     return;
   }
 
   if (!strcasecmp(sub, "factory")) {
-    pipe_clear_all();
-    g_pipe_params = pipe_default_params();
-    g_pipe_enabled = true;
-    pipe_apply(g_pipe_params);
-    sg_pipe_reset_baseline();
-    radar_set_presence_max(g_pipe_params.max_range_cm);
+    sg_pipe_init();
+    SgParams def = sg_pipe_get_params();
+    sg_core_set_pipe_enabled(true, true);
+    sg_core_set_params(&def, true);
+    sg_core_reset_baseline();
+    radar_set_presence_max(def.max_range_cm);
+    g_after_cfg_ms = millis() + 1000;
     out.println(F("[calib] factory reset: params default aplicados e persistidos"));
     return;
   }
 
   if (!strcasecmp(sub, "rollback")) {
-    SgParams bak = g_pipe_params;
-    bool en = g_pipe_enabled;
-    if (!pipe_restore_backup(bak, en)) {
+    SgParams bak = *sg_core_get_params();
+    bool en = sg_core_pipe_enabled();
+    if (!sg_config_pipe_restore_backup(&bak, &en)) {
       out.println(F("[calib] rollback indisponivel (sem backup)"));
       return;
     }
-    g_pipe_params = bak;
-    g_pipe_enabled = en;
-    pipe_apply(g_pipe_params);
-    sg_pipe_reset_baseline();
-    radar_set_presence_max(g_pipe_params.max_range_cm);
+    sg_core_set_pipe_enabled(en, true);
+    sg_core_set_params(&bak, true);
+    sg_core_reset_baseline();
+    radar_set_presence_max(bak.max_range_cm);
+    g_after_cfg_ms = millis() + 1000;
     out.println(F("[calib] rollback aplicado a partir do backup"));
     pipe_show(out);
     return;
@@ -681,13 +556,11 @@ static void radar_set_presence_max(uint16_t cm) {
 
 static void on_cli_range(uint32_t cm) {
   if (cm > 0 && cm <= 10) cm *= 100; // aceita metros (2/4/6)
-  uint16_t target = clamp_range_cm(cm);
-  g_range_cm = target;
-  g_pipe_params.max_range_cm = target;
-  pipe_apply(g_pipe_params);
-  sg_pipe_reset_baseline();
-  radar_set_presence_max(target);
-  LOGI("[CLI] range set to %u cm (preset)", (unsigned)target);
+  sg_core_set_range_cm((uint16_t)cm, true);
+  sg_core_reset_baseline();
+  radar_set_presence_max(sg_core_get_range_cm());
+  g_after_cfg_ms = millis() + 1000;
+  LOGI("[CLI] range set to %u cm (preset)", (unsigned)sg_core_get_range_cm());
 }
 
 // ---------------------- HTTP/WS helpers ----------------------
@@ -775,39 +648,41 @@ static void ws_accept_clients() {
 
 // ---------------------- MQTT helpers ----------------------
 static void mqtt_build_meas(char* out, size_t out_sz) {
-  if (!out || out_sz==0 || !g_has_last) { if(out_sz>0) out[0]=0; return; }
+  const SgCoreSnapshot* snap = sg_core_get_snapshot();
+  if (!out || out_sz==0 || !snap || !snap->has_meas) { if(out_sz>0) out[0]=0; return; }
   char payload[256];
   snprintf(payload, sizeof(payload),
     "{\"measures\":[{\"sensor\":\"radar\",\"qty\":\"distance\",\"value\":%.2f,\"unit\":\"m\"},"
     "{\"sensor\":\"radar\",\"qty\":\"speed\",\"value\":%.2f,\"unit\":\"m/s\"},"
     "{\"sensor\":\"radar\",\"qty\":\"signal\",\"value\":%u,\"unit\":\"au\"}],"
     "\"status\":%d}",
-    g_last.distance_cm*0.01f,
-    g_last.speed_cms*0.01f,
-    g_last.signal,
-    (int)g_pipe_out.stable);
+    snap->meas.distance_cm*0.01f,
+    snap->meas.speed_cms*0.01f,
+    snap->meas.signal,
+    (int)snap->pipe.stable);
   sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, g_last_seen_ms, "meas", payload, out, out_sz);
+  sg_http_envelope(&g_http_ctx, snap->meas_ms, "meas", payload, out, out_sz);
 }
 
 static void mqtt_build_meas_raw(char* out, size_t out_sz) {
-  if (!out || out_sz==0 || !g_has_last) { if(out_sz>0) out[0]=0; return; }
+  const SgCoreSnapshot* snap = sg_core_get_snapshot();
+  if (!out || out_sz==0 || !snap || !snap->has_meas) { if(out_sz>0) out[0]=0; return; }
   snprintf(out, out_sz,
     "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
     "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
     "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
-    (unsigned long)g_last_seen_ms,
-    status_str(g_last.status),
-    g_last.distance_cm * 0.01f,
-    g_last.speed_cms * 0.01f,
-    g_last.snr,
-    g_last.distance_cm,
-    (int)g_last.speed_cms,
-    g_last.signal,
-    (int)g_pipe_out.state,
-    (int)g_pipe_out.stable,
-    (unsigned long)g_pipe_out.stable_ms,
-    (g_last.distance_cm>0 && g_last.distance_cm<=g_range_cm)? "true":"false"
+    (unsigned long)snap->meas_ms,
+    status_str(snap->meas.status),
+    snap->meas.distance_cm * 0.01f,
+    snap->meas.speed_cms * 0.01f,
+    snap->meas.snr,
+    snap->meas.distance_cm,
+    (int)snap->meas.speed_cms,
+    snap->meas.signal,
+    (int)snap->pipe.state,
+    (int)snap->pipe.stable,
+    (unsigned long)snap->pipe.stable_ms,
+    snap->in_range ? "true" : "false"
   );
 }
 
@@ -931,8 +806,9 @@ static void handle_http_occupancy() {
   sg_http_next_seq(&g_http_ctx);
   SgHttpOccupancy occ;
   occ.ts_ms = millis();
-  occ.state = (int)g_pipe_out.stable;
-  occ.confidence = (g_pipe_out.stable == SG_EMPTY) ? 0.1f : 0.9f;
+  const SgCoreSnapshot* snap = sg_core_get_snapshot();
+  occ.state = snap ? (int)snap->pipe.stable : 0;
+  occ.confidence = (snap && snap->pipe.stable == SG_EMPTY) ? 0.1f : 0.9f;
   char buf[256];
   sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
   http_send_json(buf);
@@ -960,7 +836,8 @@ static void handle_http_health() {
 }
 
 static void handle_http_meas() {
-  if (!g_has_last) {
+  const SgCoreSnapshot* snap = sg_core_get_snapshot();
+  if (!snap || !snap->has_meas) {
     http_set_cors();
     g_http_server.send(404, "application/json", "{\"error\":\"no_data\"}");
     return;
@@ -970,18 +847,18 @@ static void handle_http_meas() {
     "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
     "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
     "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
-    (unsigned long)g_last_seen_ms,
-    status_str(g_last.status),
-    g_last.distance_cm * 0.01f,
-    g_last.speed_cms * 0.01f,
-    g_last.snr,
-    g_last.distance_cm,
-    (int)g_last.speed_cms,
-    g_last.signal,
-    (int)g_pipe_out.state,
-    (int)g_pipe_out.stable,
-    (unsigned long)g_pipe_out.stable_ms,
-    (g_last.distance_cm>0 && g_last.distance_cm<=g_range_cm)? "true":"false"
+    (unsigned long)snap->meas_ms,
+    status_str(snap->meas.status),
+    snap->meas.distance_cm * 0.01f,
+    snap->meas.speed_cms * 0.01f,
+    snap->meas.snr,
+    snap->meas.distance_cm,
+    (int)snap->meas.speed_cms,
+    snap->meas.signal,
+    (int)snap->pipe.state,
+    (int)snap->pipe.stable,
+    (unsigned long)snap->pipe.stable_ms,
+    snap->in_range ? "true" : "false"
   );
   (void)n;
   http_send_json(buf);
@@ -1019,6 +896,7 @@ static void handle_http_cmd() {
 
 static void handle_http_info() {
   http_set_cors();
+  net_service_refresh(&g_net_info);
   char buf[192];
   IPAddress sta = g_net_info.sta_ip;
   IPAddress ap  = g_net_info.ap_ip;
@@ -1037,12 +915,11 @@ static void handle_http_pipe() {
   // se vier query ?state=on/off, ajusta
   if (g_http_server.hasArg("state")) {
     String st = g_http_server.arg("state");
-    if (st.equalsIgnoreCase("on"))  g_pipe_enabled = true;
-    if (st.equalsIgnoreCase("off")) g_pipe_enabled = false;
-    pipe_save(g_pipe_params);
+    if (st.equalsIgnoreCase("on"))  sg_core_set_pipe_enabled(true, true);
+    if (st.equalsIgnoreCase("off")) sg_core_set_pipe_enabled(false, true);
   }
   char buf[64];
-  snprintf(buf, sizeof(buf), "{\"enabled\":%s}", g_pipe_enabled ? "true" : "false");
+  snprintf(buf, sizeof(buf), "{\"enabled\":%s}", sg_core_pipe_enabled() ? "true" : "false");
   g_http_server.send(200, "application/json", buf);
 }
 
@@ -1071,20 +948,19 @@ static void setup_http_ws() {
 }
 
 static void mqtt_save_cfg() {
-  SgMqttCfgStored cfg{};
+  MqttRuntimeCfg cfg{};
   strlcpy(cfg.host, MQTT_HOST, sizeof(cfg.host));
   cfg.port = MQTT_PORT;
-  sg_config_mqtt_save(&cfg);
+  mqtt_config_save(&cfg);
 }
 
 static void mqtt_load_cfg() {
-  SgMqttCfgStored def{};
+  MqttRuntimeCfg def{};
   strlcpy(def.host, MQTT_HOST, sizeof(def.host));
   def.port = MQTT_PORT;
-  SgMqttCfgStored out{};
-  sg_config_mqtt_load(&out, &def);
-  strlcpy(MQTT_HOST, out.host, sizeof(MQTT_HOST));
-  MQTT_PORT = out.port;
+  mqtt_config_load(&g_mqtt_cfg, &def);
+  strlcpy(MQTT_HOST, g_mqtt_cfg.host, sizeof(MQTT_HOST));
+  MQTT_PORT = g_mqtt_cfg.port;
 }
 
 static void on_mqtt_cmd(const char* payload, size_t len) {
@@ -1098,7 +974,7 @@ static void on_mqtt_cmd(const char* payload, size_t len) {
     uint32_t dur = 60000;
     json_get_int_key(payload, len, "dur_ms", dur);
     if (dur == 0) dur = 60000;
-    bool ok = sg_calib_start(dur);
+    bool ok = sg_core_calib_start(dur);
     if (ok) {
       mqtt_build_ack(txid, 1, ackbuf, sizeof(ackbuf));
       sg_mqtt_pub_ack(ackbuf);
@@ -1118,11 +994,10 @@ static void on_mqtt_cmd(const char* payload, size_t len) {
     if (!strcmp(path, "pipe.dist_max")) {
       uint32_t v = 0; json_get_int_key(payload, len, "value", v);
       if (v > 0 && v <= 10) v *= 100;
-      g_pipe_params.max_range_cm = clamp_range_cm(v);
-      g_range_cm = g_pipe_params.max_range_cm;
-      pipe_apply(g_pipe_params);
-      sg_pipe_reset_baseline();
-      radar_set_presence_max(g_range_cm);
+      sg_core_set_range_cm((uint16_t)v, true);
+      sg_core_reset_baseline();
+      radar_set_presence_max(sg_core_get_range_cm());
+      g_after_cfg_ms = millis() + 1000;
       mqtt_build_ack(txid, 1, ackbuf, sizeof(ackbuf));
       sg_mqtt_pub_ack(ackbuf);
       return;
@@ -1185,14 +1060,7 @@ void setup() {
   unsigned long t0 = millis();
   while (!Serial && (millis() - t0) < 1500) { /* aguarda enumerar */ }
 
-  sg_net_init(&g_net_info);
-  LOGI("[NET] AP SenseGrid em %s", g_net_info.ap_ip.toString().c_str());
-  if (g_net_info.sta_connected) {
-    LOGI("[NET] STA conectado em %s IP=%s", g_net_info.ssid_sta, g_net_info.sta_ip.toString().c_str());
-  } else {
-    LOGW("[NET] STA nao conectou; mantendo apenas AP");
-  }
-  LOGI("[NET] MAC=%s", g_net_info.mac);
+  net_service_init(&g_net_info);
 
   mqtt_load_cfg();
 
@@ -1206,13 +1074,11 @@ void setup() {
   }
 
   ring_init(&g_ring, g_samples, 256);
-  sg_pipe_init(); // pipeline default
-  g_pipe_params = pipe_load_from_nvs(g_pipe_enabled);
-  sg_pipe_set_params(g_pipe_params);
-  if (!g_pipe_has_nvs) {
-    pipe_save(g_pipe_params); // garante que pipe show leia o que está em NVS
-  }
-  g_range_cm = g_pipe_params.max_range_cm;
+  SgCoreConfig core_cfg;
+  core_cfg.default_range_cm = 200;
+  core_cfg.load_from_nvs = true;
+  sg_core_init(&core_cfg);
+  g_core_snap = *sg_core_get_snapshot();
 
   LOGI("[CFG] stream default=on (use 'stream off' para silenciar)");
 
@@ -1274,33 +1140,7 @@ void loop() {
       g_has_last = true;
       g_last_seen_ms = millis();
 
-      // pipeline (básico)
-      SgPipeIn in { p.status, p.distance_cm, p.speed_cms, p.snr, g_last_seen_ms };
-      bool in_range = (p.distance_cm > 0 && p.distance_cm <= g_range_cm);
-
-      // calibração: coleta baseline vazio (ou o que estiver configurado)
-      sg_calib_push_sample(in);
-
-      if (g_pipe_enabled) {
-        g_pipe_out = sg_pipe_step(in);
-      } else {
-        // bypass simples quando pipeline desligado
-        SgState passthrough = in_range
-                              ? (in.raw_status == 1 ? SG_MOTION :
-                                 in.raw_status == 2 ? SG_PRESENCE : SG_EMPTY)
-                              : SG_EMPTY;
-        g_pipe_out.state     = passthrough;
-        g_pipe_out.stable    = passthrough;
-        g_pipe_out.stable_ms = 0;
-        g_pipe_out.gated     = in_range;
-      }
-
-      // Se fora do range, zera e não emite
-      if (!in_range) {
-        g_pipe_out.state  = SG_EMPTY;
-        g_pipe_out.stable = SG_EMPTY;
-        g_pipe_out.gated  = false;
-      }
+      g_core_snap = sg_core_step(&p, g_last_seen_ms);
 
       // ring buffer
       SgSample s {
@@ -1315,12 +1155,12 @@ void loop() {
       ring_push(&g_ring, &s);
 
       // << Quieto por padrão: só imprime quando stream estiver ON >>
-      if (g_stream && in_range) {
+      if (g_stream && g_core_snap.in_range) {
         // respeita período se configurado
         static unsigned long last_emit = 0;
         unsigned long now = millis();
         if (g_stream_period_ms == 0 || (now - last_emit) >= g_stream_period_ms) {
-          print_json(p, g_pipe_out);
+          print_json(p, g_core_snap.pipe);
           last_emit = now;
         }
       }
@@ -1332,8 +1172,8 @@ void loop() {
         mqtt_build_meas_raw(raw, sizeof(raw));
         if (raw[0]) sg_mqtt_pub_meas_raw(raw);
         // publish event em transicao de estado
-        if (g_pipe_out.stable != g_last_event_state) {
-          g_last_event_state = g_pipe_out.stable;
+        if (g_core_snap.pipe.stable != g_last_event_state) {
+          g_last_event_state = g_core_snap.pipe.stable;
           const char* st = (g_last_event_state==0)?"empty":(g_last_event_state==1)?"presence":"motion";
           char ev[256];
           char payload[96];
@@ -1372,8 +1212,8 @@ void loop() {
     sg_http_next_seq(&g_http_ctx);
     SgHttpOccupancy occ;
     occ.ts_ms = now;
-    occ.state = (int)g_pipe_out.stable;
-    occ.confidence = (g_pipe_out.stable == SG_EMPTY) ? 0.1f : 0.9f;
+    occ.state = (int)g_core_snap.pipe.stable;
+    occ.confidence = (g_core_snap.pipe.stable == SG_EMPTY) ? 0.1f : 0.9f;
     char buf[256];
     sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
     ws_broadcast(buf);

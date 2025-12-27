@@ -64,17 +64,17 @@ static void maybe_finish(uint32_t now_ms) {
   }
 }
 
-void sg_calib_push_sample(const SgPipeIn& in) {
-  if (g_state != SG_CALIB_COLLECT) return;
-  uint32_t now = in.now_ms;
+void sg_calib_push_sample(const SgPipeIn* in) {
+  if (g_state != SG_CALIB_COLLECT || !in) return;
+  uint32_t now = in->now_ms;
   if (g_t_start == 0) g_t_start = now;
   g_t_last = now;
   g_samples_total++;
 
-  bool valid_dist = (in.dist_cm > 0);
+  bool valid_dist = (in->dist_cm > 0);
   if (valid_dist) {
     g_samples_valid++;
-    float snr = in.snr;
+    float snr = in->snr;
     if (snr < 0.0f) snr = 0.0f;
     if (snr > 1.0f) snr = 1.0f;
 
@@ -85,7 +85,7 @@ void sg_calib_push_sample(const SgPipeIn& in) {
     g_snr_m2 += delta * delta2;
 
     // Hist de dist�ncia
-    uint16_t clamped = (in.dist_cm > HIST_MAX_CM) ? HIST_MAX_CM : in.dist_cm;
+    uint16_t clamped = (in->dist_cm > HIST_MAX_CM) ? HIST_MAX_CM : in->dist_cm;
     int bin = clamped / HIST_BIN_CM;
     if (bin < 0) bin = 0;
     if (bin >= HIST_BINS) bin = HIST_BINS - 1;
@@ -136,17 +136,22 @@ SgCalibMetrics sg_calib_metrics(uint32_t now_ms) {
   return m;
 }
 
-SgCalibSuggest sg_calib_build_suggest(const SgParams& base) {
+SgCalibSuggest sg_calib_build_suggest(const SgParams* base) {
+  SgParams base_local;
+  if (!base) {
+    base_local = sg_pipe_get_params();
+    base = &base_local;
+  }
   SgCalibMetrics m = sg_calib_metrics(g_t_last);
   SgCalibSuggest s;
   // Valores default iguais ao base (mant�m caso n�o haja dados)
-  s.max_range_cm   = base.max_range_cm;
-  s.snr_min        = base.snr_min;
-  s.delta_exist    = base.delta_exist;
-  s.hold_empty_ms  = base.hold_empty_ms;
-  s.hold_exist_ms  = base.hold_exist_ms;
-  s.hold_motion_ms = base.hold_motion_ms;
-  s.k_ema          = base.k_ema;
+  s.max_range_cm   = base->max_range_cm;
+  s.snr_min        = base->snr_min;
+  s.delta_exist    = base->delta_exist;
+  s.hold_empty_ms  = base->hold_empty_ms;
+  s.hold_exist_ms  = base->hold_exist_ms;
+  s.hold_motion_ms = base->hold_motion_ms;
+  s.k_ema          = base->k_ema;
 
   if (m.samples_valid == 0) return s;
 
@@ -165,12 +170,12 @@ SgCalibSuggest sg_calib_build_suggest(const SgParams& base) {
 
   // Holds: aumenta se jitter alto, reduz se SNR tranquilo
   bool jitter_high = (m.snr_std > 0.05f);
-  s.hold_empty_ms  = (uint16_t)((uint32_t)base.hold_empty_ms + (jitter_high ? 250 : 100));
-  s.hold_exist_ms  = (uint16_t)((uint32_t)base.hold_exist_ms + (jitter_high ? 100 : 0));
-  s.hold_motion_ms = base.hold_motion_ms;
+  s.hold_empty_ms  = (uint16_t)((uint32_t)base->hold_empty_ms + (jitter_high ? 250 : 100));
+  s.hold_exist_ms  = (uint16_t)((uint32_t)base->hold_exist_ms + (jitter_high ? 100 : 0));
+  s.hold_motion_ms = base->hold_motion_ms;
 
   // EMA mais lenta se jitter alto
-  s.k_ema = jitter_high ? 0.01f : base.k_ema;
+  s.k_ema = jitter_high ? 0.01f : base->k_ema;
 
   return s;
 }
@@ -178,7 +183,7 @@ SgCalibSuggest sg_calib_build_suggest(const SgParams& base) {
 bool sg_calib_apply(SgParams* params_io) {
   if (!params_io) return false;
   if (g_state != SG_CALIB_READY && g_state != SG_CALIB_APPLIED) return false;
-  SgCalibSuggest s = sg_calib_build_suggest(*params_io);
+  SgCalibSuggest s = sg_calib_build_suggest(params_io);
   params_io->max_range_cm   = s.max_range_cm;
   params_io->snr_min        = s.snr_min;
   params_io->delta_exist    = s.delta_exist;

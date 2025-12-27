@@ -18,14 +18,15 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
-struct UartHandle {
+typedef struct UartHandle {
   void* impl;     // ponteiro opaco (HardwareSerial*)
   int   rx_pin;
   int   tx_pin;
   uint32_t baud;
   int   uart_num; // 0/1/2 (no ESP32-C3: usamos 1 para o radar)
-};
+} UartHandle;
 
 // Inicializa a UART física.
 // Retorna true em caso de sucesso.
@@ -42,5 +43,5 @@ int uart_read_frame(UartHandle* h,
                     uint8_t* out_buf,
                     size_t   out_max,
                     uint32_t timeout_ms,
-                    uint8_t  hdr0 = 0x55,
-                    uint8_t  hdr1 = 0xA5);
+                    uint8_t  hdr0,
+                    uint8_t  hdr1);

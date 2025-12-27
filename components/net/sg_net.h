@@ -11,6 +11,12 @@ struct SgNetInfo {
   char      mac[18];
 };
 
-// Inicializa AP + STA com credenciais padrao.
-// Preenche info (IP/AP, MAC, SSID) se fornecido.
+// Inicializa AP + STA usando credenciais persistidas (ou defaults) e preenche info.
 void sg_net_init(SgNetInfo* info);
+
+// Atualiza info lendo o estado atual do WiFi (nao reconecta).
+void sg_net_get_info(SgNetInfo* info);
+
+// Atualiza credenciais persistentes. Nao reconecta automaticamente.
+bool sg_net_set_sta_credentials(const char* ssid, const char* pass);
+bool sg_net_set_ap_credentials(const char* ssid, const char* pass);

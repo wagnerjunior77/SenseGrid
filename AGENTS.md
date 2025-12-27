@@ -171,8 +171,8 @@ struct SgPipeIn  { uint8_t raw_status; uint16_t dist_cm; int16_t speed_cms; floa
 enum SgState { SG_EMPTY=0, SG_PRESENCE=1, SG_MOTION=2 };
 struct SgPipeOut { SgState state; SgState stable; uint32_t stable_ms; bool gated; };
 void   sg_pipe_init();
-void   sg_pipe_set_params(const SgParams& p);
-SgPipeOut sg_pipe_step(const SgPipeIn& in);
+void   sg_pipe_set_params(const SgParams* p);
+SgPipeOut sg_pipe_step(const SgPipeIn* in);
 Gating por distância/SNR; filtros (median3 + IIR); baseline EMA; histerese + holds.
 
 CLI: pipe show / pipe set <key> <value> para tunar parâmetros em tempo real.

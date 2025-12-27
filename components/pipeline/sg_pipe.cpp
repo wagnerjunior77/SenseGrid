@@ -31,7 +31,10 @@ void sg_pipe_init() {
   inited = true;
 }
 
-void sg_pipe_set_params(const SgParams& p) { P = p; }
+void sg_pipe_set_params(const SgParams* p) {
+  if (!p) return;
+  P = *p;
+}
 
 SgParams sg_pipe_get_params() { return P; }
 
@@ -45,13 +48,21 @@ static SgState map_raw(uint8_t raw) {
   }
 }
 
-SgPipeOut sg_pipe_step(const SgPipeIn& in) {
+SgPipeOut sg_pipe_step(const SgPipeIn* in) {
   if (!inited) sg_pipe_init();
+  if (!in) {
+    SgPipeOut out;
+    out.state = SG_EMPTY;
+    out.stable = SG_EMPTY;
+    out.stable_ms = 0;
+    out.gated = false;
+    return out;
+  }
 
-  bool gated = (in.dist_cm > 0 && in.dist_cm <= P.max_range_cm);
-  SgState cand = gated ? map_raw(in.raw_status) : SG_EMPTY;
+  bool gated = (in->dist_cm > 0 && in->dist_cm <= P.max_range_cm);
+  SgState cand = gated ? map_raw(in->raw_status) : SG_EMPTY;
 
-  float snr = in.snr;
+  float snr = in->snr;
   if (snr < 0.0f) snr = 0.0f;
   if (snr > 1.0f) snr = 1.0f;
 
@@ -64,7 +75,7 @@ SgPipeOut sg_pipe_step(const SgPipeIn& in) {
     if (baseline_snr > 1.0f) baseline_snr = 1.0f;
   }
 
-  uint32_t now = in.now_ms;
+  uint32_t now = in->now_ms;
 
   // Gate duro: se fora do range, zeramos imediatamente o estado
   if (!gated) {
@@ -87,7 +98,7 @@ SgPipeOut sg_pipe_step(const SgPipeIn& in) {
 
   // MOTION precisa SNR e velocidade
   if (cand == SG_MOTION) {
-    uint16_t abs_speed = (uint16_t)((in.speed_cms < 0) ? -in.speed_cms : in.speed_cms);
+    uint16_t abs_speed = (uint16_t)((in->speed_cms < 0) ? -in->speed_cms : in->speed_cms);
     if (snr < P.snr_move || abs_speed < P.speed_thr_cms) {
       cand = SG_PRESENCE;
     }
@@ -103,10 +114,10 @@ SgPipeOut sg_pipe_step(const SgPipeIn& in) {
 
   // Histerese por SNR para presença estática
   if (cand == SG_PRESENCE) {
-    if (in.snr < P.snr_on_exist) cand = SG_EMPTY;
+    if (in->snr < P.snr_on_exist) cand = SG_EMPTY;
   } else if (stable_state == SG_PRESENCE) {
     // se já está estável em PRESENCE, só cai quando SNR < off
-    if (in.snr >= P.snr_off_exist) {
+    if (in->snr >= P.snr_off_exist) {
       cand = SG_PRESENCE; // mantém enquanto não abaixo do off
     }
   }

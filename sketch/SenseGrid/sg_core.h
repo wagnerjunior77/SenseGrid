@@ -1,8 +1,3 @@
 #pragma once
-#ifdef __cplusplus
-extern "C" {
-#endif
-void sg_core_init(void);
-#ifdef __cplusplus
-}
-#endif
+// Wrapper para apontar para o core real em components/core
+#include "../../components/core/sg_core.h"
