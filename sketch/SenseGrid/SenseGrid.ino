@@ -26,6 +26,7 @@
 #include "glue/sg_calib_glue.h"  // inclui o assistente de calibração
 #include "glue/sg_http_glue.h"   // builders de HTTP/WS
 #include "glue/sg_mqtt_glue.h"
+#include "glue/sg_net_glue.h"
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -68,6 +69,7 @@ static SgHttpCtx g_http_ctx;
 static char g_device_id[24] = {0};
 static unsigned long g_ws_last_emit = 0;
 static const unsigned long WS_PERIOD_MS = 500;
+static SgNetInfo g_net_info;
 
 struct WsConn {
   WiFiClient client;
@@ -1018,9 +1020,9 @@ static void handle_http_cmd() {
 static void handle_http_info() {
   http_set_cors();
   char buf[192];
-  IPAddress sta = WiFi.localIP();
-  IPAddress ap  = WiFi.softAPIP();
-  const char* ssid = WiFi.SSID().c_str();
+  IPAddress sta = g_net_info.sta_ip;
+  IPAddress ap  = g_net_info.ap_ip;
+  const char* ssid = g_net_info.ssid_sta;
   snprintf(buf, sizeof(buf),
     "{\"device_id\":\"%s\",\"sta_ip\":\"%s\",\"ap_ip\":\"%s\",\"ssid_sta\":\"%s\"}",
     g_device_id,
@@ -1182,27 +1184,14 @@ void setup() {
   unsigned long t0 = millis();
   while (!Serial && (millis() - t0) < 1500) { /* aguarda enumerar */ }
 
-  // AP fechado para teste HTTP/WS
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP("SenseGrid", "esp929305");
-  IPAddress apIP = WiFi.softAPIP();
-  LOGI("[NET] AP SenseGrid iniciado em %s", apIP.toString().c_str());
-
-  // STA na rede local
-  WiFi.begin("PIZZIOLO_2G", "revil2301revil2301");
-  uint32_t t_sta = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - t_sta) < 10000) {
-    delay(200);
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    LOGI("[NET] STA conectado em %s IP=%s", WiFi.SSID().c_str(), WiFi.localIP().toString().c_str());
+  sg_net_init(&g_net_info);
+  LOGI("[NET] AP SenseGrid em %s", g_net_info.ap_ip.toString().c_str());
+  if (g_net_info.sta_connected) {
+    LOGI("[NET] STA conectado em %s IP=%s", g_net_info.ssid_sta, g_net_info.sta_ip.toString().c_str());
   } else {
     LOGW("[NET] STA nao conectou; mantendo apenas AP");
   }
-  uint8_t mac[6];
-  WiFi.macAddress(mac);
-  LOGI("[NET] MAC=%02X:%02X:%02X:%02X:%02X:%02X",
-       mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  LOGI("[NET] MAC=%s", g_net_info.mac);
 
   mqtt_load_cfg();
 
