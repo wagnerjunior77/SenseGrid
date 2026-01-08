@@ -201,6 +201,7 @@ static void cli_help(Print& out) {
   out.println(F("  range 2|4|6     -> alcance max (m) com preset (stream so emite se in-range)"));
   out.println(F("  calib start|status|apply|abort|reset|preview|profile save|profile load"));
   out.println(F("  raw on|off|once -> dump frame bruto (hex)"));
+  out.println(F("  wifi show|set|ap|clear|apply"));
 }
 static void cli_info(Print& out) {
   out.print(F("UART1 RX=")); out.print(SG_RADAR_RX);
@@ -226,6 +227,10 @@ static void on_cli_raw(int argc, char* argv[], Print& out) {
   if (!strcasecmp(sub, "off")) { g_raw_dump = false; g_raw_dump_left = 0; out.println(F("[raw] off")); return; }
   if (!strcasecmp(sub, "once")) { g_raw_dump = false; g_raw_dump_left = 1; out.println(F("[raw] once")); return; }
   out.println(F("[raw] comando invalido"));
+}
+
+static void on_cli_wifi(int argc, char* argv[], Print& out) {
+  net_service_cli(argc, argv, out);
 }
 
 static bool parse_float(const char* s, float& out) {
@@ -591,7 +596,8 @@ void setup() {
     /*range */ on_cli_range,
     /*calib */ on_cli_calib,
     /*raw   */ on_cli_raw,
-    /*mqtt  */ mqtt_service_cli
+    /*mqtt  */ mqtt_service_cli,
+    /*wifi  */ on_cli_wifi
   );
 
 }

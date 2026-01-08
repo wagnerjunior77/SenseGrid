@@ -13,11 +13,12 @@ static SgCliRangeFn  cb_range  = nullptr;
 static SgCliCalibFn  cb_calib  = nullptr;
 static SgCliRawFn    cb_raw    = nullptr;
 static SgCliMqttFn   cb_mqtt   = nullptr;
+static SgCliWifiFn   cb_wifi   = nullptr;
 
 void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
                          SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l,
                          SgCliPipeFn p, SgCliRangeFn rg, SgCliCalibFn cb,
-                         SgCliRawFn raw, SgCliMqttFn m) {
+                         SgCliRawFn raw, SgCliMqttFn m, SgCliWifiFn w) {
   cb_help   = h;
   cb_info   = i;
   cb_stream = s;
@@ -29,6 +30,7 @@ void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
   cb_calib  = cb;
   cb_raw    = raw;
   cb_mqtt   = m;
+  cb_wifi   = w;
 }
 
 void sg_cli_print_default_help(Print& out) {
@@ -44,6 +46,7 @@ void sg_cli_print_default_help(Print& out) {
   out.println(F("  calib ...            (calib start|status|apply|reset)"));
   out.println(F("  raw on|off|once      (dump de frame bruto)"));
   out.println(F("  mqtt ...             (mqtt show|host|port|restart)"));
+  out.println(F("  wifi ...             (wifi show|set|ap|clear|apply)"));
 }
 
 static void trim(char* s) {
@@ -172,6 +175,15 @@ void sg_cli_poll(Stream& in, Print& out) {
           cb_mqtt(argc, argv, out);
         } else {
           out.println(F("[WARN] mqtt: handler not set"));
+        }
+        continue;
+      }
+
+      if (!strcasecmp(cmd, "wifi")) {
+        if (cb_wifi) {
+          cb_wifi(argc, argv, out);
+        } else {
+          out.println(F("[WARN] wifi: handler not set"));
         }
         continue;
       }

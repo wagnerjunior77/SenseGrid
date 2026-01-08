@@ -20,3 +20,11 @@ void sg_net_get_info(SgNetInfo* info);
 // Atualiza credenciais persistentes. Nao reconecta automaticamente.
 bool sg_net_set_sta_credentials(const char* ssid, const char* pass);
 bool sg_net_set_ap_credentials(const char* ssid, const char* pass);
+
+// Limpa credenciais persistentes.
+bool sg_net_clear_sta_credentials();
+bool sg_net_clear_ap_credentials();
+
+// Indica se ha credenciais armazenadas.
+bool sg_net_has_sta_credentials();
+bool sg_net_has_ap_credentials();

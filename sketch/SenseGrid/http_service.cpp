@@ -5,6 +5,7 @@
 #include <mbedtls/base64.h>
 #include <mbedtls/sha1.h>
 #include <string.h>
+#include <ctype.h>
 #include "net_service.h"
 
 static WebServer g_http_server(80);
@@ -118,6 +119,49 @@ static void http_set_cors() {
 static void http_send_json(const char* json) {
   http_set_cors();
   g_http_server.send(200, "application/json", json);
+}
+
+static bool parse_bool_str(const String& v) {
+  if (v.length() == 0) return false;
+  if (v.equalsIgnoreCase("1")) return true;
+  if (v.equalsIgnoreCase("true")) return true;
+  if (v.equalsIgnoreCase("on")) return true;
+  if (v.equalsIgnoreCase("yes")) return true;
+  return false;
+}
+
+static bool json_get_str_key(const char* payload, size_t len, const char* key_with_quotes,
+                             char* out, size_t out_sz) {
+  if (!payload || !key_with_quotes || !out || out_sz == 0) return false;
+  const char* p = strstr(payload, key_with_quotes);
+  if (!p) return false;
+  const char* q = strchr(p + strlen(key_with_quotes), '"');
+  if (!q) return false;
+  q++;
+  const char* e = strchr(q, '"');
+  if (!e) return false;
+  size_t n = (size_t)(e - q);
+  if (n >= out_sz) n = out_sz - 1;
+  memcpy(out, q, n);
+  out[n] = 0;
+  (void)len;
+  return true;
+}
+
+static bool json_get_bool_key(const char* payload, size_t len, const char* key_with_quotes, bool& out) {
+  if (!payload || !key_with_quotes) return false;
+  const char* p = strstr(payload, key_with_quotes);
+  if (!p) return false;
+  const char* c = strchr(p, ':');
+  if (!c) return false;
+  c++;
+  while (*c && isspace((unsigned char)*c)) c++;
+  if (!strncmp(c, "true", 4)) { out = true; return true; }
+  if (!strncmp(c, "false", 5)) { out = false; return true; }
+  if (*c == '1') { out = true; return true; }
+  if (*c == '0') { out = false; return true; }
+  (void)len;
+  return false;
 }
 
 static void handle_http_occupancy() {
@@ -244,6 +288,161 @@ static void handle_http_info() {
   g_http_server.send(200, "application/json", buf);
 }
 
+static void net_build_status_json(char* buf, size_t buf_sz) {
+  if (!buf || buf_sz == 0) return;
+  if (g_net_info) net_service_refresh(g_net_info);
+  bool sta_set = net_service_has_sta_credentials();
+  bool ap_set = net_service_has_ap_credentials();
+  bool sta_connected = (g_net_info && g_net_info->sta_connected);
+  IPAddress sta;
+  IPAddress ap;
+  if (g_net_info) {
+    sta = g_net_info->sta_ip;
+    ap  = g_net_info->ap_ip;
+  }
+  String sta_ip = ip_to_str(sta);
+  String ap_ip  = ip_to_str(ap);
+  snprintf(buf, buf_sz,
+           "{\"sta_set\":%s,\"ap_set\":%s,\"sta_connected\":%s,\"sta_ip\":\"%s\",\"ap_ip\":\"%s\"}",
+           sta_set ? "true" : "false",
+           ap_set ? "true" : "false",
+           sta_connected ? "true" : "false",
+           sta_ip.c_str(),
+           ap_ip.c_str());
+}
+
+static bool net_apply_from_form() {
+  bool changed = false;
+  if (parse_bool_str(g_http_server.arg("clear"))) {
+    sg_net_clear_sta_credentials();
+    sg_net_clear_ap_credentials();
+    changed = true;
+  }
+  String sta_ssid = g_http_server.arg("sta_ssid");
+  String sta_pass = g_http_server.arg("sta_pass");
+  if (sta_ssid.length() > 0) {
+    sg_net_set_sta_credentials(sta_ssid.c_str(), sta_pass.c_str());
+    changed = true;
+  }
+  String ap_ssid = g_http_server.arg("ap_ssid");
+  String ap_pass = g_http_server.arg("ap_pass");
+  if (ap_ssid.length() > 0) {
+    sg_net_set_ap_credentials(ap_ssid.c_str(), ap_pass.c_str());
+    changed = true;
+  }
+  return changed;
+}
+
+static bool net_apply_from_json(const char* payload, size_t len) {
+  bool changed = false;
+  bool clear = false;
+  if (json_get_bool_key(payload, len, "\"clear\"", clear) && clear) {
+    sg_net_clear_sta_credentials();
+    sg_net_clear_ap_credentials();
+    changed = true;
+  }
+  char sta_ssid[33] = {0};
+  char sta_pass[65] = {0};
+  bool has_sta = json_get_str_key(payload, len, "\"sta_ssid\"", sta_ssid, sizeof(sta_ssid));
+  bool has_sta_pass = json_get_str_key(payload, len, "\"sta_pass\"", sta_pass, sizeof(sta_pass));
+  if (has_sta) {
+    sg_net_set_sta_credentials(sta_ssid, has_sta_pass ? sta_pass : "");
+    changed = true;
+  }
+  char ap_ssid[33] = {0};
+  char ap_pass[65] = {0};
+  bool has_ap = json_get_str_key(payload, len, "\"ap_ssid\"", ap_ssid, sizeof(ap_ssid));
+  bool has_ap_pass = json_get_str_key(payload, len, "\"ap_pass\"", ap_pass, sizeof(ap_pass));
+  if (has_ap) {
+    sg_net_set_ap_credentials(ap_ssid, has_ap_pass ? ap_pass : "");
+    changed = true;
+  }
+  return changed;
+}
+
+static void handle_http_net_get() {
+  http_set_cors();
+  char buf[192];
+  net_build_status_json(buf, sizeof(buf));
+  g_http_server.send(200, "application/json", buf);
+}
+
+static void handle_http_net_post() {
+  bool changed = false;
+  if (g_http_server.hasArg("sta_ssid") || g_http_server.hasArg("ap_ssid") || g_http_server.hasArg("clear")) {
+    changed = net_apply_from_form();
+  } else {
+    String body = read_body();
+    changed = net_apply_from_json(body.c_str(), body.length());
+  }
+  if (changed) {
+    net_service_apply();
+  }
+  char buf[192];
+  net_build_status_json(buf, sizeof(buf));
+  http_set_cors();
+  g_http_server.send(200, "application/json", buf);
+}
+
+static void handle_http_setup_get() {
+  char buf[1024];
+  const char* device_id = sg_telemetry_device_id(g_tctx);
+  bool sta_set = net_service_has_sta_credentials();
+  if (g_net_info) net_service_refresh(g_net_info);
+  IPAddress sta;
+  IPAddress ap;
+  if (g_net_info) {
+    sta = g_net_info->sta_ip;
+    ap  = g_net_info->ap_ip;
+  }
+  String sta_ip = ip_to_str(sta);
+  String ap_ip  = ip_to_str(ap);
+  const char* status = sta_set ? "provisioned" : "not provisioned";
+  int n = snprintf(buf, sizeof(buf),
+    "<!doctype html><html><head><meta charset=\"utf-8\">"
+    "<title>SenseGrid Setup</title>"
+    "<style>body{font-family:Arial,sans-serif;max-width:520px;margin:24px auto;padding:0 12px;}"
+    "label{display:block;margin-top:12px;}input{width:100%%;padding:6px;}button{margin-top:12px;padding:8px 12px;}</style>"
+    "</head><body>"
+    "<h2>SenseGrid WiFi Setup</h2>"
+    "<p>Device: %s</p>"
+    "<p>Status: %s</p>"
+    "<p>STA IP: %s | AP IP: %s</p>"
+    "<form method=\"POST\" action=\"/setup\">"
+    "<label>STA SSID</label><input name=\"sta_ssid\" type=\"text\" maxlength=\"32\">"
+    "<label>STA Password</label><input name=\"sta_pass\" type=\"password\" maxlength=\"64\">"
+    "<label>AP SSID (optional)</label><input name=\"ap_ssid\" type=\"text\" maxlength=\"32\">"
+    "<label>AP Password (optional)</label><input name=\"ap_pass\" type=\"password\" maxlength=\"64\">"
+    "<label><input type=\"checkbox\" name=\"clear\" value=\"1\"> Clear stored credentials</label>"
+    "<button type=\"submit\">Save</button>"
+    "</form>"
+    "<p>After save, the device will reapply WiFi and may disconnect.</p>"
+    "</body></html>",
+    device_id ? device_id : "",
+    status,
+    sta_ip.c_str(),
+    ap_ip.c_str());
+  (void)n;
+  g_http_server.send(200, "text/html", buf);
+}
+
+static void handle_http_setup_post() {
+  bool changed = net_apply_from_form();
+  const char* msg = changed ? "Saved. Reapplying WiFi..." : "No changes.";
+  char buf[512];
+  int n = snprintf(buf, sizeof(buf),
+    "<!doctype html><html><head><meta charset=\"utf-8\">"
+    "<title>SenseGrid Setup</title></head><body>"
+    "<p>%s</p><p><a href=\"/setup\">Back</a></p>"
+    "</body></html>", msg);
+  (void)n;
+  g_http_server.send(200, "text/html", buf);
+  if (changed) {
+    delay(200);
+    net_service_apply();
+  }
+}
+
 static void handle_http_pipe() {
   http_set_cors();
   // se vier query ?state=on/off, ajusta
@@ -261,6 +460,9 @@ void http_service_init(SgTelemetryCtx* tctx, SgNetInfo* net_info) {
   g_tctx = tctx;
   g_net_info = net_info;
 
+  g_http_server.on("/", HTTP_GET, handle_http_setup_get);
+  g_http_server.on("/setup", HTTP_GET, handle_http_setup_get);
+  g_http_server.on("/setup", HTTP_POST, handle_http_setup_post);
   g_http_server.on("/v1/occupancy", HTTP_GET, handle_http_occupancy);
   g_http_server.on("/v1/occupancy", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/tracks", HTTP_GET, handle_http_tracks);
@@ -273,6 +475,9 @@ void http_service_init(SgTelemetryCtx* tctx, SgNetInfo* net_info) {
   g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/info", HTTP_GET, handle_http_info);
   g_http_server.on("/v1/info", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/net", HTTP_GET, handle_http_net_get);
+  g_http_server.on("/v1/net", HTTP_POST, handle_http_net_post);
+  g_http_server.on("/v1/net", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/pipe", HTTP_GET, handle_http_pipe);
   g_http_server.on("/v1/pipe", HTTP_OPTIONS, handle_http_options);
   g_http_server.begin();

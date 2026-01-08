@@ -13,12 +13,13 @@ using SgCliRangeFn  = void(*)(uint32_t cm);
 using SgCliCalibFn  = void(*)(int argc, char* argv[], Print& out);
 using SgCliRawFn    = void(*)(int argc, char* argv[], Print& out);
 using SgCliMqttFn   = void(*)(int argc, char* argv[], Print& out);
+using SgCliWifiFn   = void(*)(int argc, char* argv[], Print& out);
 
-// Registra os handlers (help, info, stream, rate, json, log, pipe, range, calib)
+// Registra os handlers (help, info, stream, rate, json, log, pipe, range, calib, raw, mqtt, wifi)
 void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
                          SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l,
                          SgCliPipeFn p, SgCliRangeFn rg, SgCliCalibFn cb,
-                         SgCliRawFn raw, SgCliMqttFn m);
+                         SgCliRawFn raw, SgCliMqttFn m, SgCliWifiFn w);
 
 // Faz o parse linha-a-linha do que chega pela serial
 void sg_cli_poll(Stream& in, Print& out);

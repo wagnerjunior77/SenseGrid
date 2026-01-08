@@ -1,17 +1,19 @@
 #include "sg_net.h"
 #include <string.h>
+#include "../util/sg_log.h"
 #include "../config/sg_config.h"
 
-// Defaults to keep current behavior if nothing is stored.
-static const char* DEF_STA_SSID = "PIZZIOLO_2G";
-static const char* DEF_STA_PASS = "revil2301revil2301";
-static const char* DEF_AP_SSID  = "SenseGrid";
-static const char* DEF_AP_PASS  = "esp929305";
+// Defaults intentionally empty; require provisioning to enable WiFi.
+static const char* DEF_STA_SSID = "";
+static const char* DEF_STA_PASS = "";
+static const char* DEF_AP_SSID  = "";
+static const char* DEF_AP_PASS  = "";
 
 static const uint32_t STA_TIMEOUT_MS = 10000;
 static const uint8_t  STA_MAX_RETRY  = 2;
 
 static SgNetInfo g_last_info;
+static bool g_prov_ap = false;
 
 static void copy_str(const char* src, char* dst, size_t dst_sz) {
   if (!dst || dst_sz == 0) return;
@@ -59,10 +61,26 @@ static void start_ap(const SgNetCfgStored& cfg) {
   }
 }
 
+static void reset_wifi() {
+  WiFi.disconnect(true);
+  WiFi.softAPdisconnect(true);
+  WiFi.mode(WIFI_MODE_NULL);
+  delay(200);
+}
+
+static void start_provision_ap() {
+  char ssid[32];
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  snprintf(ssid, sizeof(ssid), "SenseGrid-Setup-%02X%02X", mac[4], mac[5]);
+  WiFi.softAP(ssid);
+  g_prov_ap = true;
+}
+
 static void connect_sta(const SgNetCfgStored& cfg) {
   if (!cfg.sta_ssid[0]) return;
   for (uint8_t attempt = 1; attempt <= STA_MAX_RETRY; ++attempt) {
-    Serial.printf("[NET] STA connect try %u to %s\n", (unsigned)attempt, cfg.sta_ssid);
+    SG_LOG(SG_INFO, "NET STA connect try %u", (unsigned)attempt);
     WiFi.begin(cfg.sta_ssid, cfg.sta_pass);
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && (millis() - t0) < STA_TIMEOUT_MS) {
@@ -80,24 +98,38 @@ void sg_net_init(SgNetInfo* info) {
   SgNetCfgStored cfg{};
   load_net_cfg(cfg);
 
+  bool has_ap = (cfg.ap_ssid[0] != 0);
+  bool has_sta = (cfg.sta_ssid[0] != 0);
+  g_prov_ap = false;
+
+  if (!has_ap) SG_LOG(SG_INFO, "NET AP not configured");
+  if (!has_sta) SG_LOG(SG_INFO, "NET STA not configured");
+
+  reset_wifi();
   WiFi.mode(WIFI_AP_STA);
-  start_ap(cfg);
+  if (has_ap) start_ap(cfg);
   connect_sta(cfg);
+  bool sta_connected = (WiFi.status() == WL_CONNECTED);
+  if (!has_ap && (!has_sta || !sta_connected)) {
+    start_provision_ap();
+  }
 
   fill_info(&g_last_info);
   if (info) *info = g_last_info;
 
-  Serial.printf("[NET] AP %s IP=%s\n",
-                g_last_info.ssid_ap,
-                g_last_info.ap_ip.toString().c_str());
-  if (g_last_info.sta_connected) {
-    Serial.printf("[NET] STA conectado em %s IP=%s\n",
-                  g_last_info.ssid_sta,
-                  g_last_info.sta_ip.toString().c_str());
-  } else {
-    Serial.println("[NET] STA nao conectou; mantendo apenas AP");
+  if (g_prov_ap) {
+    SG_LOG(SG_INFO, "NET AP provision up IP=%s", g_last_info.ap_ip.toString().c_str());
+  } else if (has_ap) {
+    SG_LOG(SG_INFO, "NET AP up IP=%s", g_last_info.ap_ip.toString().c_str());
   }
-  Serial.printf("[NET] MAC=%s\n", g_last_info.mac);
+  if (has_sta) {
+    if (sta_connected) {
+      SG_LOG(SG_INFO, "NET STA connected IP=%s", g_last_info.sta_ip.toString().c_str());
+    } else {
+      SG_LOG(SG_WARN, "NET STA not connected; AP only");
+    }
+  }
+  SG_LOG(SG_INFO, "NET MAC=%s", g_last_info.mac);
 }
 
 void sg_net_get_info(SgNetInfo* info) {
@@ -123,4 +155,34 @@ bool sg_net_set_ap_credentials(const char* ssid, const char* pass) {
   copy_str(pass, cfg.ap_pass, sizeof(cfg.ap_pass));
   sg_config_net_save(&cfg);
   return true;
+}
+
+bool sg_net_clear_sta_credentials() {
+  SgNetCfgStored cfg{};
+  sg_config_net_load(&cfg, nullptr);
+  memset(cfg.sta_ssid, 0, sizeof(cfg.sta_ssid));
+  memset(cfg.sta_pass, 0, sizeof(cfg.sta_pass));
+  sg_config_net_save(&cfg);
+  return true;
+}
+
+bool sg_net_clear_ap_credentials() {
+  SgNetCfgStored cfg{};
+  sg_config_net_load(&cfg, nullptr);
+  memset(cfg.ap_ssid, 0, sizeof(cfg.ap_ssid));
+  memset(cfg.ap_pass, 0, sizeof(cfg.ap_pass));
+  sg_config_net_save(&cfg);
+  return true;
+}
+
+bool sg_net_has_sta_credentials() {
+  SgNetCfgStored cfg{};
+  sg_config_net_load(&cfg, nullptr);
+  return cfg.sta_ssid[0] != 0;
+}
+
+bool sg_net_has_ap_credentials() {
+  SgNetCfgStored cfg{};
+  sg_config_net_load(&cfg, nullptr);
+  return cfg.ap_ssid[0] != 0;
 }
