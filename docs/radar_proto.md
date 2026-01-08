@@ -1,93 +1,72 @@
-# Protocolo do Radar (ME73MS01 – família)
+# Radar protocol (ME73MS01 family)
 
-> **Objetivo**: documentar frame, campos decodificados e verificação de integridade.
+> Objective: document frame layout, decoded fields, and checksum rules.
 
 ---
 
-## Moldura do frame (downlink → ESP)
+## Frame layout (downlink to ESP)
 
 ```
 Header   LEN (BE)   FUNC  CMD1  CMD2   DATA...   SUM
 0x55 0xA5  0x00 0xNN   [1]   [1]   [1]   [N-4]     [1]
 ```
 
-- `Header`: constante `0x55 0xA5`
-- `LEN`: tamanho **em big-endian** do bloco a seguir (`FUNC..SUM`)
-- `FUNC`, `CMD1`, `CMD2`: identificadores do relatório/comando
-- `DATA…`: payload específico do relatório
-- `SUM`: **checksum de 1 byte**, calculado como a **soma módulo 256** de:
-  ```
-  FUNC + CMD1 + CMD2 + todos os bytes de DATA
-  ```
-  (não inclui `Header` nem `LEN`)
+- Header: constant `0x55 0xA5`
+- LEN: size in big-endian of the block `FUNC..SUM`
+- FUNC, CMD1, CMD2: report or command identifiers
+- DATA: report payload
+- SUM: 1-byte checksum (mod 256)
+
+### Checksum rules
+
+- legacy: `FUNC + CMD1 + CMD2 + all DATA bytes`
+- full: sum of `header + len + payload` (except `SUM`)
+- firmware accepts both; invalid SUM is discarded
 
 ---
 
-## Exemplo real (hex) e parsing
+## Example (hex) and parsing
 
 ```
 55 A5 00 0E  03 81 00 00  01 00 91 00  00 00 00 01  A5  C4
-^ ^  ^  ^      ^  ^  ^     ^  ^  ^  ^   ^  ^  ^  ^   ^   ^
-| |  |  |      |  |  |     |  |  |  |   |  |  |  |   |   └─ SUM
-| |  |  |      |  |  |     |  |  |  |   |  |  |  └─ DATA[?]
-| |  |  |      |  |  |     |  |  |  └─ DATA[?]
-| |  |  |      |  |  └─ CMD2
-| |  |  └─ CMD1
-| |  └─ LEN=0x000E (14 bytes → FUNC..SUM)
-| └─ Header
-└─ Header
 ```
 
-Heurística usada no firmware para `FUNC=0x03` (relatório ativo):
-- `status`         ← `DATA[1]` (`0=none`, `1=move`, `2=exist`)
-- `distance_cm`    ← `DATA[2..3]` (BE)
-- `speed_cms`      ← `DATA[4..5]` (BE, `int16`)
-- `pitch_deg`      ← `DATA[7]`    (placeholder/heurístico)
-- `signal`         ← `DATA[8..9]` (BE)
+Mapping used in firmware for `FUNC=0x03`, `CMD1=0x81` (presence report):
+- `target_id`   <- `DATA[0]`
+- `status`      <- `DATA[1]` (`0=none`, `1=move`, `2=exist`)
+- `distance_cm` <- `DATA[2..3]` (BE)
+- `speed_cms`   <- `DATA[4..5]` (BE, int16)
+- `az_deg`      <- `DATA[6]` (int8)
+- `el_deg`      <- `DATA[7]` (int8)
+- `signal`      <- `DATA[8..9]` (BE)
 
-> No exemplo acima:
-> - `status = 0x81 & 0x03` (o fabricante costuma embutir flags; o firmware mapeia para 0/1/2)
-> - `distance_cm = 0x0091 = 145`
-> - `signal = 0x01A5 = 421`
-
-**Observação importante**: a família ME73 pode variar levemente o layout conforme firmware/versão. O parser é tolerante e ignora frames com `LEN` inconsistente ou `SUM` inválido.
-
----
-
-## Checksum (SUM)
-
-- Implementação no firmware:
-  ```cpp
-  uint8_t sum = func + cmd1 + cmd2;
-  for (auto b : data) sum += b;
-  sum &= 0xFF;
-  ```
-- Frames com SUM incorreto são **descartados**.
+Notes:
+- layout can vary by firmware revision
+- parser ignores frames with invalid LEN or checksum
 
 ---
 
-## Comandos de configuração usados pelo firmware
+## Config commands used on boot
 
-No boot, o firmware envia:
-1. **VO hold** = 3000 ms  
-2. **Presence max distance** (ex.: **200 cm = 2 m**)
-3. **Salvar** parâmetros (save all)
+1. VO hold = 3000 ms
+2. Presence max distance (ex: 200 cm)
+3. Save all parameters
 
-> A composição exata dos bytes de configuração pode variar por revisão do módulo.  
-> A regra geral é: `Header + LEN + (FUNC/CMD...) + PARAMS + SUM`.  
-> Para uso prático recomenta-se ajustar o **range** via CLI (`range <cm>`) e deixar o firmware montar o frame correto.
+> Exact bytes can vary by module revision.
+> Prefer `range <cm>` in the CLI and let the firmware build the frame.
 
 ---
 
-## Mapeamento de status
+## Status mapping
 
-- `0 = none` → vazio
-- `1 = move` → movimento detectado
-- `2 = exist` → presença estática (respiração/postura sutil)
+- `0 = none` -> empty
+- `1 = move` -> motion detected
+- `2 = exist` -> static presence
 
 ---
 
-## Notas de alcance
+## Range notes
 
-- O limite de presença (**Presence max**) é aplicado no módulo (ex.: 2 m).  
-- Valores maiores (ex.: 4–5 m) são possíveis fisicamente, mas o projeto **padrão** usa **2 m** para reduzir interferência e falsos positivos em ambientes pequenos.
+- Presence max is applied inside the module (ex: 2 m).
+- Larger values are possible, but the default project setup uses 2 m
+  to reduce interference and false positives in small rooms.

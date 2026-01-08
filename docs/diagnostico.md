@@ -32,13 +32,13 @@ range <cm>          # ex.: range 200 → 2 m (limite de presença)
 ### 1) JSON de telemetria (stream)
 
 ```json
-{"ts_ms":38858,"status":"move","dist_m":1.910,"speed_mps":0.000,"snr":0.422,"distance_cm":191,"speed_cms":0,"signal":863}
-{"ts_ms":39107,"status":"none","dist_m":0.000,"speed_mps":0.000,"snr":0.000,"distance_cm":0,"speed_cms":0,"signal":0}
-{"ts_ms":45753,"status":"move","dist_m":1.950,"speed_mps":0.000,"snr":1.000,"distance_cm":195,"speed_cms":0,"signal":2438}
+{"ts_ms":38858,"status":"move","dist_m":1.910,"speed_mps":0.000,"snr":0.422,"distance_cm":191,"speed_cms":0,"signal":863,"az_deg":0,"el_deg":0}
+{"ts_ms":39107,"status":"none","dist_m":0.000,"speed_mps":0.000,"snr":0.000,"distance_cm":0,"speed_cms":0,"signal":0,"az_deg":0,"el_deg":0}
+{"ts_ms":45753,"status":"move","dist_m":1.950,"speed_mps":0.000,"snr":1.000,"distance_cm":195,"speed_cms":0,"signal":2438,"az_deg":0,"el_deg":0}
 ```
 
-- **status** alterna entre `move` (movimento), `exist` (parado com respiração/postura sutil) e `none` (vazio).
-- **dist_m** estabiliza próximo do alvo; fora do alcance configurado, retorna `none`.
+- **status** alterna entre `move` (movimento), `exist` (parado com respiracao/postura sutil) e `none` (vazio).
+- **dist_m** estabiliza proximo do alvo; fora do alcance configurado, retorna `none`.
 
 ### 2) Logs de OCC (pino digital do módulo)
 

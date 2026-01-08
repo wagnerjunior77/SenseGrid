@@ -79,7 +79,7 @@ Link: https://tinyurl.com/mr2y4c6x
 ## 5. Fluxos Principais
 
 - **Aquisição** → `RadarDriver`/`EnvDriver` capturam bytes/leituras.  
-- **Parsing** → `RadarParser` gera `Meas{ id, distance_cm, speed_cms, dircos_deg, pitch_deg, signal, T, RH, lux }`.  
+- **Parsing** -> `RadarParser` gera `Meas{ id, distance_cm, speed_cms, az_deg, el_deg, signal, T, RH, lux }`.
 - **Processamento** → `Classifier` emite estados; `Tracker` mantém IDs; `GateCounter` estima entradas/saídas; `ZoneMasker` aplica máscaras; `FusionLux` modula confiança; `UseCaseEngine` aplica preset.  
 - **Saída** → `OccupancyService` publica `Event`s via `IOutput` (MQTT/HTTP).  
 - **Comandos** → `ICommand` recebe `cmd` (ex.: `apply_use_case`, `calibrate`, `set_zone_mask`).

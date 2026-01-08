@@ -61,7 +61,7 @@ json on               # garante JSON por linha
 Excerto com estado estável (≈54 s) da sessão gravada em `logs/session.jsonl`:
 
 ```json
-{"ts_ms":57609,"status":"exist","dist_m":0.87,"speed_mps":0.0,"snr":0.412,"distance_cm":87,"speed_cms":0,"signal":844,"state":1,"stable":1,"stable_ms":54494,"in_range":true}
+{"ts_ms":57609,"status":"exist","dist_m":0.87,"speed_mps":0.0,"snr":0.412,"distance_cm":87,"speed_cms":0,"signal":844,"az_deg":0,"el_deg":0,"state":1,"stable":1,"stable_ms":54494,"in_range":true}
 ```
 
 > Nota: ainda falta uma sessão com `stable` ≥ 10 min para compor o exemplo definitivo; ao gravar, substituir o trecho acima por um bloco dessa sessão longa.

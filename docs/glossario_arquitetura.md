@@ -3,7 +3,7 @@
 ## Hardware
 
 ### Radar 24GHz
-Módulo de radar (ME73MS01). Emite micro-ondas e mede ecos; entrega targets com distância, velocidade, “direction cosine”, pitch e força do sinal via UART.
+Modulo de radar (ME73MS01). Emite micro-ondas e mede ecos; entrega targets com distancia, velocidade, az_deg, el_deg e signal via UART.
 
 ### Env sensors T UR Lux
 Sensores ambientais (temperatura, umidade relativa, luminosidade). Servem para “contexto” e filtros (ex.: reduzir sensibilidade se o ventilador estiver ligado ou se o ambiente estiver muito escuro).
@@ -23,7 +23,7 @@ Driver I²C para ler T/UR/Lux em intervalos fixos, com retry e debounce. Entrega
 ## Parser
 
 ### RadarParser bytes to Meas
-Traduz os bytes dos frames do radar para uma estrutura **Meas** (medição) com campos tipados: `id`, `distance_cm`, `speed_cms`, `dircos_deg`, `pitch_deg`, `signal`, e snapshot de `T`/`RH`/`lux` quando disponível.
+Traduz os bytes dos frames do radar para uma estrutura Meas com campos tipados: `id`, `distance_cm`, `speed_cms`, `az_deg`, `el_deg`, `signal`, e snapshot de `T`/`RH`/`lux` quando disponivel.
 
 ---
 
@@ -143,7 +143,7 @@ Implementação de **ILogger** que grava linhas JSON (`.jsonl`) em partição de
 
 ### Meas
 Medição instantânea do radar (e contexto):
-- `id`, `distance_cm`, `speed_cms`, `dircos_deg`, `pitch_deg`, `signal`, `T`, `RH`, `lux`, `t_sample`.
+- `id`, `distance_cm`, `speed_cms`, `az_deg`, `el_deg`, `signal`, `T`, `RH`, `lux`, `t_sample`.
 
 ### Event
 Saída semântica do sistema (ex.: `state.changed`, `count.changed`, `track.started`/`ended`, `zone.activity`, `kpi.tick`) com `t_publish` e `confidence`.

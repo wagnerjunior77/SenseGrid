@@ -17,7 +17,7 @@ Exemplo (occupancy):
 ```
 .../c                        # comandos para o device (JSON)
 .../meas                     # medidas estabilizadas (distance/speed/signal + status)
-.../meas_raw                 # medidas brutas (igual serial JSON)
+.../meas_raw                 # medidas brutas (igual serial JSON, inclui az_deg/el_deg)
 .../events                   # eventos de mudanca de estado (presence.changed)
 .../status                   # status basico do device
 .../cap                      # capacidades (sensores/eventos)
@@ -41,7 +41,10 @@ Exemplo (occupancy):
 - GET `/v1/occupancy` -> envelope + payload {count, confidence}
 - GET `/v1/tracks` -> {active}
 - GET `/v1/health` -> {fw, uptime_s, rssi_dbm}
-- GET `/v1/meas` -> payload completo (dist_m, speed_mps, snr, distance_cm, speed_cms, signal, state, stable, stable_ms, in_range)
+- GET `/v1/meas` -> payload completo (dist_m, speed_mps, snr, distance_cm, speed_cms, signal, az_deg, el_deg, state, stable, stable_ms, in_range)
+- GET `/v1/net` -> status da rede (sta_set, ap_set, sta_connected, sta_ip, ap_ip)
+- POST `/v1/net` -> provisiona rede (sta_ssid, sta_pass, ap_ssid, ap_pass, clear)
+- GET `/setup` -> portal HTML de provisionamento
 - POST `/v1/cmd` -> placeholder (ack simples, nao executa comando hoje)
 
 ## Campos gerais

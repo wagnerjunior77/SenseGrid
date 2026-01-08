@@ -78,7 +78,7 @@ Interpretação (campos típicos `Data[0..9]`):
 - **Status**: byte 9 `0x01` → **movimento** (`0`: ninguém; `1`: corpo em movimento; `2`: existência/parado)  
 - **Distância**: bytes 10–11 `0x00 0x5E` → **94 cm = 0,94 m**  
 - **Velocidade**: 16‑bit com sinal (**cm/s**)  
-- **Direção/Ângulo (cos, pitch)**: 8‑bit com sinal (**graus**)  
+- **Azimute/Elevacao**: 8-bit com sinal (graus)
 - **Sinal**: bytes 16–17 `0x01 0x78` → **376**
 
 ### 4.2. Principais comandos de configuração/leitura

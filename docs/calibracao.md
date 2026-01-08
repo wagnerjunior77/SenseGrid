@@ -7,6 +7,12 @@ Objetivo: coletar baseline de ambiente vazio (~60-120 s), sugerir parametros (ra
 - Broker Mosquitto rodando (ex.: `mosquitto -c mosquitto.config -v`) acessivel na rede local.
 - PC na mesma rede que a ESP32 ou conectado ao AP da placa.
 
+
+## Provisionamento de rede
+- CLI: `wifi show`, `wifi set <ssid> <pass>`, `wifi ap <ssid> [pass]`, `wifi clear [sta|ap|all]`, `wifi apply`.
+- HTTP: `GET /v1/net`, `POST /v1/net` (JSON com `sta_ssid`, `sta_pass`, `ap_ssid`, `ap_pass`, `clear`).
+- Portal AP: se nao houver STA, o firmware sobe AP aberto `SenseGrid-Setup-XXXX` e a pagina `http://192.168.4.1/setup`.
+
 ## Fluxo via CLI serial (USB)
 1) Abra o serial (115200). No VS Code: Terminal -> New Terminal -> `toolchain\arduino-cli.exe monitor --config-file toolchain\arduino-cli.yaml -p COM5 -c baudrate=115200`.
 2) Inicie coleta (vazio, saia do alcance):  
@@ -48,6 +54,8 @@ Hint:
 - Se nao tiver DNS/hosts, use o IP do broker (ex.: `-h 192.168.15.11`). Para hostname local no Windows, pode adicionar em `C:\Windows\System32\drivers\etc\hosts`: `192.168.15.11 broker.sensegrid`.
 
 ## Fluxo via HTTP (consulta)
+- Status de rede: `curl http://<ip>/v1/net`
+- Portal: `http://<ip>/setup` (HTML)
 - Ocupacao: `curl http://<ip>/v1/occupancy`
 - Medida completa: `curl http://<ip>/v1/meas`
 - Health: `curl http://<ip>/v1/health`

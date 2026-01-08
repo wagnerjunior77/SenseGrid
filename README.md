@@ -98,26 +98,41 @@ json off
 rate 100          # 100 ms entre amostras (~10 Hz)
 log info          # níveis: error, warn, info, debug
 range 200         # limite de distância do radar em cm (ex.: 200 = 2 m)
+wifi show          # status STA/AP
+wifi set <ssid> <pass>
+wifi ap <ssid> [pass]
+wifi clear [sta|ap|all]
+wifi apply
 ```
+
+## Provisionamento de rede
+
+- Se nao houver STA configurado, o firmware sobe um AP aberto "SenseGrid-Setup-XXXX".
+- Acesse http://192.168.4.1/ ou http://192.168.4.1/setup para configurar SSID/senha.
+- Endpoint HTTP:
+  - GET /v1/net
+  - POST /v1/net (JSON: {"sta_ssid":"...","sta_pass":"...","ap_ssid":"...","ap_pass":"...","clear":true})
+
 
 > Dica: `stream on` + `json on` é o combo para gravar dados com um script no PC.
 
 ---
 
-## Exemplo de saída JSON (real)
+## Exemplo de saida JSON (real)
 
 ```json
-{"ts_ms":147932,"status":"move","dist_m":0.730,"speed_mps":0.000,"snr":1.000,"distance_cm":73,"speed_cms":0,"signal":310}
-{"ts_ms":148282,"status":"exist","dist_m":0.280,"speed_mps":0.000,"snr":1.000,"distance_cm":28,"speed_cms":0,"signal":1685}
-{"ts_ms":42210,"status":"none","dist_m":0.000,"speed_mps":0.000,"snr":0.000,"distance_cm":0,"speed_cms":0,"signal":0}
+{"ts_ms":147932,"status":"move","dist_m":0.730,"speed_mps":0.000,"snr":1.000,"distance_cm":73,"speed_cms":0,"signal":310,"az_deg":0,"el_deg":0}
+{"ts_ms":148282,"status":"exist","dist_m":0.280,"speed_mps":0.000,"snr":1.000,"distance_cm":28,"speed_cms":0,"signal":1685,"az_deg":0,"el_deg":0}
+{"ts_ms":42210,"status":"none","dist_m":0.000,"speed_mps":0.000,"snr":0.000,"distance_cm":0,"speed_cms":0,"signal":0,"az_deg":0,"el_deg":0}
 ```
 
 Campos:
-- **status**: `none` (vazio), `exist` (presença estática), `move` (movimento)
-- **dist_m / distance_cm**: distância estimada
-- **speed_mps / speed_cms**: velocidade (quando disponível)
-- **snr**: razão sinal-ruído normalizada (0…1)
-- **signal**: intensidade “bruta” do fabricante
+- **status**: `none` (vazio), `exist` (presenca estatica), `move` (movimento)
+- **dist_m / distance_cm**: distancia estimada
+- **speed_mps / speed_cms**: velocidade (quando disponivel)
+- **snr**: razao sinal-ruido normalizada (0-1)
+- **signal**: intensidade bruta do fabricante
+- **az_deg / el_deg**: angulos do alvo (quando disponivel)
 
 ---
 
