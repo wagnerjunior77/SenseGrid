@@ -41,7 +41,8 @@ static int g_log_level = 2;
 
 // ---------------------- Globals ----------------------
 UartHandle  g_uart;
-RadarHandle g_radar;
+RadarHandle g_radar_ctx;
+SgRadar     g_radar = { &SG_RADAR_ME73_OPS, &g_radar_ctx };
 
 static SgSample g_samples[256];
 SgRing g_ring;
@@ -564,7 +565,7 @@ void setup() {
   if (!uart_begin(&g_uart, /*uart*/1, SG_RADAR_BAUD, /*RX*/SG_RADAR_RX, /*TX*/SG_RADAR_TX)) {
     LOGE("[ERR] uart_begin failed");
   }
-  if (!radar_begin(&g_radar, &g_uart)) {
+  if (!sg_radar_begin(&g_radar, &g_uart)) {
     LOGE("[ERR] radar_begin failed");
   }
 
@@ -618,7 +619,7 @@ void loop() {
     // tenta até 3 frames por loop
     for (int i = 0; i < 3; ++i) {
       RadarParsed p;
-      if (!radar_read_parsed(&g_radar, &p, /*timeout_ms*/20)) break;
+      if (!sg_radar_read_parsed(&g_radar, &p, /*timeout_ms*/20)) break;
 
       g_last = p;
       g_has_last = true;
@@ -627,7 +628,7 @@ void loop() {
       bool dump_now = (g_raw_dump || g_raw_dump_left > 0);
       if (dump_now) {
         RadarRawFrame rf;
-        if (radar_get_last_raw(&rf)) {
+        if (sg_radar_get_last_raw(&g_radar, &rf)) {
           print_raw_frame(rf);
         }
         if (g_raw_dump_left > 0) g_raw_dump_left--;

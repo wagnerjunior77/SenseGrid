@@ -9,6 +9,31 @@ static inline uint16_t be16(const uint8_t* p) {
 static RadarRawFrame g_last_raw;
 static bool g_has_last_raw = false;
 
+static bool me73_begin(void* ctx, void* io) {
+  return radar_begin(reinterpret_cast<RadarHandle*>(ctx),
+                     reinterpret_cast<UartHandle*>(io));
+}
+
+static bool me73_read_raw(void* ctx, RadarRawFrame* out, uint32_t timeout_ms) {
+  return radar_read_raw(reinterpret_cast<RadarHandle*>(ctx), out, timeout_ms);
+}
+
+static bool me73_read_parsed(void* ctx, RadarParsed* out, uint32_t timeout_ms) {
+  return radar_read_parsed(reinterpret_cast<RadarHandle*>(ctx), out, timeout_ms);
+}
+
+static bool me73_get_last_raw(void* ctx, RadarRawFrame* out) {
+  (void)ctx;
+  return radar_get_last_raw(out);
+}
+
+const SgRadarOps SG_RADAR_ME73_OPS = {
+  me73_begin,
+  me73_read_raw,
+  me73_read_parsed,
+  me73_get_last_raw
+};
+
 bool radar_begin(RadarHandle* r, UartHandle* uart) {
   if (!r || !uart) return false;
   r->uart = uart;
