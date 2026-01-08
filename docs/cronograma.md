@@ -31,7 +31,7 @@ As leituras ambientais são utilizadas para qualificar decisões do radar. Em ce
 
 ## Atividade 6 — Zoneamento avançado (máscaras/ganhos por setor)
 **Semanas 12–13 (30/12–12/01) — 2 semanas**  
-O ambiente é dividido em zonas (p. ex., grade 3×2), permitindo **ganho/limiar por setor** e **máscaras** para áreas problemáticas (portas finas, vidros, áreas adjacentes). Uma visualização tipo **heatmap** indica a intensidade por região. A etapa considera o período de fim de ano, com foco no essencial.  
+O ambiente é dividido em zonas (p. ex., grade 3×2), permitindo **ganho/limiar por setor** e **máscaras** para áreas problemáticas (portas finas, vidros, áreas adjacentes). Uma visualização tipo **heatmap** indica a intensidade por região.  
 **Entregáveis:** Zoneamento com efeito em tempo real e **persistente após reinicialização**.
 
 ## Atividade 7 — Observabilidade (KPIs & heatmap)

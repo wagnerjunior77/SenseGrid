@@ -18,3 +18,4 @@ typedef struct RadarHandle {
 bool radar_begin(RadarHandle* r, UartHandle* uart);
 bool radar_read_raw(RadarHandle* r, RadarRawFrame* out, uint32_t timeout_ms);
 bool radar_read_parsed(RadarHandle* r, RadarParsed* out, uint32_t timeout_ms);
+bool radar_get_last_raw(RadarRawFrame* out);

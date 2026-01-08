@@ -6,6 +6,9 @@ static inline uint16_t be16(const uint8_t* p) {
   return (uint16_t)((p[0] << 8) | p[1]);
 }
 
+static RadarRawFrame g_last_raw;
+static bool g_has_last_raw = false;
+
 bool radar_begin(RadarHandle* r, UartHandle* uart) {
   if (!r || !uart) return false;
   r->uart = uart;
@@ -17,6 +20,8 @@ bool radar_read_raw(RadarHandle* r, RadarRawFrame* out, uint32_t timeout_ms) {
   int n = uart_read_frame(r->uart, out->data, sizeof(out->data), timeout_ms, 0x55, 0xA5);
   if (n < 0) return false;
   out->size = (uint16_t)n;
+  g_last_raw = *out;
+  g_has_last_raw = true;
   return true;
 }
 
@@ -66,9 +71,9 @@ bool radar_read_parsed(RadarHandle* r, RadarParsed* out, uint32_t timeout_ms) {
     out->status      = pay[1];          // enum do radar
     out->distance_cm = be16(&pay[2]);   // BE
     out->speed_cms   = (int16_t)be16(&pay[4]); // BE, signed
-    // pay[6..7] reservado/flags em alguns firmwares
+    out->azim_deg    = (int8_t)pay[6];
+    out->elev_deg    = (int8_t)pay[7];
     out->signal      = be16(&pay[8]);   // BE (pode ser 8/10/12 bits, depende do fw)
-    out->pitch_deg   = 0;               // placeholder se não existir
 
     // normalização
     out->dist_m    = (float)out->distance_cm / 100.0f;
@@ -81,4 +86,10 @@ bool radar_read_parsed(RadarHandle* r, RadarParsed* out, uint32_t timeout_ms) {
   }
 
   return false; // frame não reconhecido
+}
+
+bool radar_get_last_raw(RadarRawFrame* out) {
+  if (!out || !g_has_last_raw) return false;
+  *out = g_last_raw;
+  return true;
 }

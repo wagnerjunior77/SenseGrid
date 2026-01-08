@@ -18,7 +18,8 @@ typedef struct RadarParsed {
   uint8_t  status;        // 0 none, 1 move, 2 exist
   uint16_t distance_cm;   // cm (BE on observed firmware)
   int16_t  speed_cms;     // cm/s (BE, signed)
-  int8_t   pitch_deg;     // optional
+  int8_t   azim_deg;      // optional
+  int8_t   elev_deg;      // optional
   uint16_t signal;        // relative level
 
   // Normalized (SI)

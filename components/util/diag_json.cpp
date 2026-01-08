@@ -23,6 +23,8 @@ void radar_print_json(const RadarParsed* p, Stream& out, uint32_t ts_ms) {
     out.print(",\"distance_cm\":"); out.print(p->distance_cm);
     out.print(",\"speed_cms\":"); out.print(p->speed_cms);
     out.print(",\"signal\":"); out.print(p->signal);
+    out.print(",\"az_deg\":"); out.print((int)p->azim_deg);
+    out.print(",\"el_deg\":"); out.print((int)p->elev_deg);
     out.print('}');
     out.println();
 }

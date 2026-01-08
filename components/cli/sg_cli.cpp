@@ -11,11 +11,13 @@ static SgCliLogFn    cb_log    = nullptr;
 static SgCliPipeFn   cb_pipe   = nullptr;
 static SgCliRangeFn  cb_range  = nullptr;
 static SgCliCalibFn  cb_calib  = nullptr;
+static SgCliRawFn    cb_raw    = nullptr;
 static SgCliMqttFn   cb_mqtt   = nullptr;
 
 void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
                          SgCliRateFn r, SgCliJsonFn j, SgCliLogFn l,
-                         SgCliPipeFn p, SgCliRangeFn rg, SgCliCalibFn cb, SgCliMqttFn m) {
+                         SgCliPipeFn p, SgCliRangeFn rg, SgCliCalibFn cb,
+                         SgCliRawFn raw, SgCliMqttFn m) {
   cb_help   = h;
   cb_info   = i;
   cb_stream = s;
@@ -25,6 +27,7 @@ void sg_cli_set_handlers(SgCliHelpFn h, SgCliInfoFn i, SgCliStreamFn s,
   cb_pipe   = p;
   cb_range  = rg;
   cb_calib  = cb;
+  cb_raw    = raw;
   cb_mqtt   = m;
 }
 
@@ -39,6 +42,7 @@ void sg_cli_print_default_help(Print& out) {
   out.println(F("  pipe ...             (pipe on|off/set/show)"));
   out.println(F("  range <cm|2|4|6m>   (ajusta alcance max do radar/pipeline)"));
   out.println(F("  calib ...            (calib start|status|apply|reset)"));
+  out.println(F("  raw on|off|once      (dump de frame bruto)"));
   out.println(F("  mqtt ...             (mqtt show|host|port|restart)"));
 }
 
@@ -150,6 +154,15 @@ void sg_cli_poll(Stream& in, Print& out) {
           cb_calib(argc, argv, out);
         } else {
           out.println(F("[WARN] calib: handler not set"));
+        }
+        continue;
+      }
+
+      if (!strcasecmp(cmd, "raw")) {
+        if (cb_raw) {
+          cb_raw(argc, argv, out);
+        } else {
+          out.println(F("[WARN] raw: handler not set"));
         }
         continue;
       }

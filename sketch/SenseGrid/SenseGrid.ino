@@ -11,10 +11,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <mbedtls/base64.h>
-#include <mbedtls/sha1.h>
 
 #include "pins_radar.h"
 #include "glue/hal_uart_glue.h"
@@ -30,9 +26,11 @@
 #include "glue/sg_core_glue.h"
 #include "sg_core.h"
 #include "../../components/config/sg_config_pipe.h"
+#include "telemetry_ctx.h"
+#include "http_service.h"
+#include "mqtt_service.h"
 #include "../../components/config/sg_config_profiles.h"
 #include "net_service.h"
-#include "mqtt_config.h"
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------
 static int g_log_level = 2;
@@ -57,35 +55,14 @@ static int   g_occ_last = -1;
 static bool  g_stream = true;           // liga stream por padrão para logging
 static bool  g_stream_json = true;
 static unsigned long g_stream_period_ms = 50; // ~20 Hz
+static bool g_raw_dump = false;
+static uint16_t g_raw_dump_left = 0;
 
 // core/pipeline
 static SgCoreSnapshot g_core_snap;
 
-// HTTP/WS
-static WebServer g_http_server(80);
-static WiFiServer g_ws_server(81);
-static SgHttpCtx g_http_ctx;
-static char g_device_id[24] = {0};
-static unsigned long g_ws_last_emit = 0;
-static const unsigned long WS_PERIOD_MS = 500;
+static SgTelemetryCtx g_tctx;
 static SgNetInfo g_net_info;
-
-struct WsConn {
-  WiFiClient client;
-  bool active;
-};
-static WsConn g_ws_conns[4];
-
-// MQTT
-static char MQTT_HOST[64] = "192.168.15.9"; // ajuste conforme broker
-static uint16_t MQTT_PORT = 1883;
-static const char* MQTT_USER = "";
-static const char* MQTT_PASS = "";
-static const char* SB_REF   = "sb01";
-static bool g_mqtt_enabled = true;
-static bool g_mqtt_was_connected = false;
-static int g_last_event_state = -1;
-static MqttRuntimeCfg g_mqtt_cfg{};
 
 // range gate (2.00 m)
 // timing
@@ -160,18 +137,28 @@ static void print_json(const RadarParsed& p, const SgPipeOut& o) {
     Serial.printf(
       "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
       "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
+      "\"az_deg\":%d,\"el_deg\":%d,"
       "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}\n",
       (unsigned long)millis(), status_str(p.status),
       dist_m, speed_ms, snr01,
       p.distance_cm, (int)p.speed_cms, p.signal,
+      (int)p.azim_deg, (int)p.elev_deg,
       (int)o.state, (int)o.stable, (unsigned long)o.stable_ms,
       (p.distance_cm>0 && p.distance_cm<=sg_core_get_range_cm())? "true":"false"
     );
   } else {
-    Serial.printf("[PARSED] status=%s dist=%ucm signal=%u  state=%d stable=%d t=%lu\n",
-                  status_str(p.status), p.distance_cm, p.signal,
+    Serial.printf("[PARSED] status=%s dist=%ucm speed=%d cm/s (%.2f m/s) signal=%u  state=%d stable=%d t=%lu\n",
+                  status_str(p.status), p.distance_cm, (int)p.speed_cms, speed_ms, p.signal,
                   (int)o.state, (int)o.stable, (unsigned long)millis());
   }
+}
+
+static void print_raw_frame(const RadarRawFrame& rf) {
+  Serial.printf("[RAW] len=%u", (unsigned)rf.size);
+  for (uint16_t i = 0; i < rf.size; ++i) {
+    Serial.printf(" %02X", rf.data[i]);
+  }
+  Serial.println();
 }
 
 // ---------------------- Config do radar no boot ----------------------
@@ -213,6 +200,7 @@ static void cli_help(Print& out) {
   out.println(F("  pipe set k_ema <0.001..0.2>"));
   out.println(F("  range 2|4|6     -> alcance max (m) com preset (stream so emite se in-range)"));
   out.println(F("  calib start|status|apply|abort|reset|preview|profile save|profile load"));
+  out.println(F("  raw on|off|once -> dump frame bruto (hex)"));
 }
 static void cli_info(Print& out) {
   out.print(F("UART1 RX=")); out.print(SG_RADAR_RX);
@@ -230,6 +218,15 @@ static void on_cli_rate(unsigned long hz) {
 }
 static void on_cli_json(bool enable) { g_stream_json = enable; LOGI("[CLI] json %s", enable ? "on" : "off"); }
 static void on_cli_log(int lvl) { g_log_level = constrain(lvl, 0, 3); LOGI("[CLI] log level = %d", g_log_level); }
+
+static void on_cli_raw(int argc, char* argv[], Print& out) {
+  if (argc < 2) { out.println(F("[raw] uso: raw on|off|once")); return; }
+  const char* sub = argv[1];
+  if (!strcasecmp(sub, "on")) { g_raw_dump = true; g_raw_dump_left = 0; out.println(F("[raw] on")); return; }
+  if (!strcasecmp(sub, "off")) { g_raw_dump = false; g_raw_dump_left = 0; out.println(F("[raw] off")); return; }
+  if (!strcasecmp(sub, "once")) { g_raw_dump = false; g_raw_dump_left = 1; out.println(F("[raw] once")); return; }
+  out.println(F("[raw] comando invalido"));
+}
 
 static bool parse_float(const char* s, float& out) {
   if (!s) return false;
@@ -530,6 +527,11 @@ static void radar_set_presence_max(uint16_t cm) {
   radar_send(frame, sizeof(frame));
 }
 
+static void on_range_applied(uint16_t cm) {
+  radar_set_presence_max(cm);
+  g_after_cfg_ms = millis() + 1000;
+}
+
 static void on_cli_range(uint32_t cm) {
   if (cm > 0 && cm <= 10) cm *= 100; // aceita metros (2/4/6)
   sg_core_set_range_cm((uint16_t)cm, true);
@@ -537,497 +539,6 @@ static void on_cli_range(uint32_t cm) {
   radar_set_presence_max(sg_core_get_range_cm());
   g_after_cfg_ms = millis() + 1000;
   LOGI("[CLI] range set to %u cm (preset)", (unsigned)sg_core_get_range_cm());
-}
-
-// ---------------------- HTTP/WS helpers ----------------------
-static void make_device_id() {
-  uint64_t mac = ESP.getEfuseMac();
-  snprintf(g_device_id, sizeof(g_device_id), "sg-%04X%08X",
-           (uint16_t)(mac >> 32), (uint32_t)mac);
-}
-
-static bool ws_handshake(WiFiClient& c) {
-  const char* magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
-  char buf[512];
-  int n = c.readBytesUntil('\n', buf, sizeof(buf)-1); // first line
-  if (n <= 0) return false;
-  // read headers
-  String key;
-  while (c.connected()) {
-    String line = c.readStringUntil('\n');
-    if (line.length() == 0 || line == "\r") break;
-    if (line.startsWith("Sec-WebSocket-Key")) {
-      int p = line.indexOf(':');
-      if (p >= 0) {
-        key = line.substring(p+1);
-        key.trim();
-      }
-    }
-  }
-  if (key.length() == 0) return false;
-  String accept_src = key + magic;
-  unsigned char sha_out[20];
-  mbedtls_sha1_context sha;
-  mbedtls_sha1_init(&sha);
-  mbedtls_sha1_starts(&sha);
-  mbedtls_sha1_update(&sha, (const unsigned char*)accept_src.c_str(), accept_src.length());
-  mbedtls_sha1_finish(&sha, sha_out);
-  mbedtls_sha1_free(&sha);
-  unsigned char b64[64];
-  size_t b64_len = 0;
-  mbedtls_base64_encode(b64, sizeof(b64), &b64_len, sha_out, 20);
-  String accept = String((const char*)b64).substring(0, b64_len);
-  c.printf("HTTP/1.1 101 Switching Protocols\r\n");
-  c.printf("Upgrade: websocket\r\n");
-  c.printf("Connection: Upgrade\r\n");
-  c.printf("Sec-WebSocket-Accept: %s\r\n\r\n", accept.c_str());
-  return true;
-}
-
-static void ws_broadcast(const char* msg) {
-  size_t len = strlen(msg);
-  uint8_t hdr[10];
-  size_t hlen = 0;
-  hdr[0] = 0x81; // FIN + text
-  if (len < 126) {
-    hdr[1] = (uint8_t)len;
-    hlen = 2;
-  } else if (len < 65536) {
-    hdr[1] = 126;
-    hdr[2] = (len >> 8) & 0xFF;
-    hdr[3] = len & 0xFF;
-    hlen = 4;
-  } else {
-    return; // too big
-  }
-  for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
-    if (!g_ws_conns[i].active) continue;
-    if (!g_ws_conns[i].client.connected()) { g_ws_conns[i].active=false; continue; }
-    g_ws_conns[i].client.write(hdr, hlen);
-    g_ws_conns[i].client.write((const uint8_t*)msg, len);
-  }
-}
-
-static void ws_accept_clients() {
-  WiFiClient c = g_ws_server.available();
-  if (!c) return;
-  if (!ws_handshake(c)) { c.stop(); return; }
-  for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
-    if (!g_ws_conns[i].active) {
-      g_ws_conns[i].client = c;
-      g_ws_conns[i].active = true;
-      return;
-    }
-  }
-  c.stop(); // no slot
-}
-
-// ---------------------- MQTT helpers ----------------------
-static void mqtt_build_meas(char* out, size_t out_sz) {
-  const SgCoreSnapshot* snap = sg_core_get_snapshot();
-  if (!out || out_sz==0 || !snap || !snap->has_meas) { if(out_sz>0) out[0]=0; return; }
-  char payload[256];
-  snprintf(payload, sizeof(payload),
-    "{\"measures\":[{\"sensor\":\"radar\",\"qty\":\"distance\",\"value\":%.2f,\"unit\":\"m\"},"
-    "{\"sensor\":\"radar\",\"qty\":\"speed\",\"value\":%.2f,\"unit\":\"m/s\"},"
-    "{\"sensor\":\"radar\",\"qty\":\"signal\",\"value\":%u,\"unit\":\"au\"}],"
-    "\"status\":%d}",
-    snap->meas.distance_cm*0.01f,
-    snap->meas.speed_cms*0.01f,
-    snap->meas.signal,
-    (int)snap->pipe.stable);
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, snap->meas_ms, "meas", payload, out, out_sz);
-}
-
-static void mqtt_build_meas_raw(char* out, size_t out_sz) {
-  const SgCoreSnapshot* snap = sg_core_get_snapshot();
-  if (!out || out_sz==0 || !snap || !snap->has_meas) { if(out_sz>0) out[0]=0; return; }
-  snprintf(out, out_sz,
-    "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
-    "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
-    "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
-    (unsigned long)snap->meas_ms,
-    status_str(snap->meas.status),
-    snap->meas.distance_cm * 0.01f,
-    snap->meas.speed_cms * 0.01f,
-    snap->meas.snr,
-    snap->meas.distance_cm,
-    (int)snap->meas.speed_cms,
-    snap->meas.signal,
-    (int)snap->pipe.state,
-    (int)snap->pipe.stable,
-    (unsigned long)snap->pipe.stable_ms,
-    snap->in_range ? "true" : "false"
-  );
-}
-
-static void mqtt_build_status(char* out, size_t out_sz) {
-  char payload[128];
-  snprintf(payload, sizeof(payload),
-    "{\"fw\":\"1.0.0\",\"uptime_s\":%lu,\"rssi_dbm\":0}",
-    (unsigned long)(millis()/1000));
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "status", payload, out, out_sz);
-}
-
-static void mqtt_build_dt_meta(char* out, size_t out_sz) {
-  char payload[160];
-  snprintf(payload, sizeof(payload),
-    "{\"device_id\":\"%s\",\"device_model\":\"ESP32-C3\",\"provisioned_at\":0,\"version\":\"1.0.0\",\"last_update\":0,\"ota_enabled\":false}",
-    g_device_id);
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "meta", payload, out, out_sz);
-}
-
-static void mqtt_build_dt_status(char* out, size_t out_sz) {
-  char payload[96];
-  snprintf(payload, sizeof(payload),
-    "{\"device_online\":true,\"last_time_online\":%lu}",
-    (unsigned long)(millis()/1000));
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "st", payload, out, out_sz);
-}
-
-static void mqtt_build_dt_ota(char* out, size_t out_sz) {
-  const char* payload = "{\"ota_status\":\"disabled\",\"last_check\":0}";
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "ota", payload, out, out_sz);
-}
-
-static void mqtt_build_cfg_out(char* out, size_t out_sz) {
-  const char* payload =
-    "{\"meta\":{\"hw_label\":\"Saida 1\",\"type\":\"0x01\"},"
-    "\"settings\":{\"mode\":\"0x01\",\"control_value\":\"0x00\",\"pulse_time\":1000,\"boot_behavior\":\"off\"},"
-    "\"digital_child\":{\"digital_device_id\":\"none\",\"output_function\":\"0x01\"}}";
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "cfg_out", payload, out, out_sz);
-}
-
-static void mqtt_build_cfg_in(char* out, size_t out_sz) {
-  const char* payload =
-    "{\"meta\":{\"hw_label\":\"Entrada 1\",\"type\":\"0x01\"},"
-    "\"settings\":{\"mode\":\"0x01\"},"
-    "\"targets\":{\"target_1\":{\"type\":\"0x10\",\"destination\":\"self:output_1\"}}}";
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "cfg_in", payload, out, out_sz);
-}
-
-static void mqtt_build_out_state(char* out, size_t out_sz) {
-  const char* payload = "{\"state\":false}";
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "o/out/output_1", payload, out, out_sz);
-}
-
-static void mqtt_build_in_state(char* out, size_t out_sz) {
-  const char* payload = "{\"state\":false}";
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "o/in/input_1", payload, out, out_sz);
-}
-
-static void mqtt_build_cap(char* out, size_t out_sz) {
-  const char* payload = "{\"sensors\":[{\"name\":\"radar\",\"measures\":[\"distance:m\",\"speed:m/s\",\"signal:au\"],\"events\":[\"presence\"]}]}";
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_envelope(&g_http_ctx, millis(), "cap", payload, out, out_sz);
-}
-
-static void mqtt_build_ack(const char* txid, int ok, char* out, size_t out_sz) {
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_make_ack(&g_http_ctx, millis(), txid, ok, out, out_sz);
-}
-
-static void mqtt_build_err(const char* txid, const char* code, const char* msg, char* out, size_t out_sz) {
-  sg_http_next_seq(&g_http_ctx);
-  sg_http_make_err(&g_http_ctx, millis(), txid, code, msg, out, out_sz);
-}
-
-// Parsers simples (sem JSON lib) para cmd MQTT
-static bool json_get_str_key(const char* payload, size_t len, const char* key_with_quotes, char* out, size_t out_sz) {
-  if (!payload || !key_with_quotes || !out || out_sz==0) return false;
-  out[0]=0;
-  const char* p = strstr(payload, key_with_quotes);
-  if (!p) return false;
-  p += strlen(key_with_quotes);
-  const char* start = p;
-  while (*p && *p!='\"' && (size_t)(p-payload)<len) p++;
-  size_t n = (size_t)(p-start);
-  if (n >= out_sz) n = out_sz-1;
-  memcpy(out, start, n); out[n]=0;
-  return true;
-}
-
-static bool json_get_int_key(const char* payload, size_t len, const char* key, uint32_t& out) {
-  if (!payload || !key) return false;
-  const char* p = strstr(payload, key);
-  if (!p) return false;
-  p = strchr(p, ':'); if (!p) return false;
-  p++;
-  out = strtoul(p, NULL, 10);
-  return true;
-}
-static String ip_to_str(const IPAddress& ip) {
-  return ip.toString();
-}
-static void http_set_cors() {
-  g_http_server.sendHeader("Access-Control-Allow-Origin", "*");
-  g_http_server.sendHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  g_http_server.sendHeader("Access-Control-Allow-Headers", "*");
-}
-static void http_send_json(const char* json) {
-  http_set_cors();
-  g_http_server.send(200, "application/json", json);
-}
-
-static void handle_http_occupancy() {
-  sg_http_next_seq(&g_http_ctx);
-  SgHttpOccupancy occ;
-  occ.ts_ms = millis();
-  const SgCoreSnapshot* snap = sg_core_get_snapshot();
-  occ.state = snap ? (int)snap->pipe.stable : 0;
-  occ.confidence = (snap && snap->pipe.stable == SG_EMPTY) ? 0.1f : 0.9f;
-  char buf[256];
-  sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
-  http_send_json(buf);
-}
-
-static void handle_http_tracks() {
-  sg_http_next_seq(&g_http_ctx);
-  SgHttpTracks tr;
-  tr.ts_ms = millis();
-  tr.count_active = 0; // placeholder
-  char buf[192];
-  sg_http_make_tracks(&g_http_ctx, &tr, buf, sizeof(buf));
-  http_send_json(buf);
-}
-
-static void handle_http_health() {
-  sg_http_next_seq(&g_http_ctx);
-  SgHttpHealth h;
-  h.ts_ms = millis();
-  h.uptime_s = (uint32_t)(millis() / 1000);
-  h.rssi_dbm = 0;
-  char buf[192];
-  sg_http_make_health(&g_http_ctx, &h, buf, sizeof(buf));
-  http_send_json(buf);
-}
-
-static void handle_http_meas() {
-  const SgCoreSnapshot* snap = sg_core_get_snapshot();
-  if (!snap || !snap->has_meas) {
-    http_set_cors();
-    g_http_server.send(404, "application/json", "{\"error\":\"no_data\"}");
-    return;
-  }
-  char buf[256];
-  int n = snprintf(buf, sizeof(buf),
-    "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
-    "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
-    "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
-    (unsigned long)snap->meas_ms,
-    status_str(snap->meas.status),
-    snap->meas.distance_cm * 0.01f,
-    snap->meas.speed_cms * 0.01f,
-    snap->meas.snr,
-    snap->meas.distance_cm,
-    (int)snap->meas.speed_cms,
-    snap->meas.signal,
-    (int)snap->pipe.state,
-    (int)snap->pipe.stable,
-    (unsigned long)snap->pipe.stable_ms,
-    snap->in_range ? "true" : "false"
-  );
-  (void)n;
-  http_send_json(buf);
-}
-
-static void handle_http_options() {
-  http_set_cors();
-  g_http_server.send(204);
-}
-
-static String read_body() {
-  if (!g_http_server.hasArg("plain")) return String();
-  return g_http_server.arg("plain");
-}
-
-static void handle_http_cmd() {
-  String body = read_body();
-  char txid_buf[32] = {0};
-  const char* txid = "";
-  // parse txid basico (nao robusto)
-  int idx = body.indexOf("\"txid\"");
-  if (idx >= 0) {
-    int q1 = body.indexOf('"', idx + 6);
-    int q2 = body.indexOf('"', q1 + 1);
-    if (q1 >= 0 && q2 > q1) {
-      body.substring(q1 + 1, q2).toCharArray(txid_buf, sizeof(txid_buf));
-      txid = txid_buf;
-    }
-  }
-  sg_http_next_seq(&g_http_ctx);
-  char buf[192];
-  sg_http_make_ack(&g_http_ctx, millis(), txid, 1, buf, sizeof(buf));
-  http_send_json(buf);
-}
-
-static void handle_http_info() {
-  http_set_cors();
-  net_service_refresh(&g_net_info);
-  char buf[192];
-  IPAddress sta = g_net_info.sta_ip;
-  IPAddress ap  = g_net_info.ap_ip;
-  const char* ssid = g_net_info.ssid_sta;
-  snprintf(buf, sizeof(buf),
-    "{\"device_id\":\"%s\",\"sta_ip\":\"%s\",\"ap_ip\":\"%s\",\"ssid_sta\":\"%s\"}",
-    g_device_id,
-    ip_to_str(sta).c_str(),
-    ip_to_str(ap).c_str(),
-    ssid ? ssid : "");
-  g_http_server.send(200, "application/json", buf);
-}
-
-static void handle_http_pipe() {
-  http_set_cors();
-  // se vier query ?state=on/off, ajusta
-  if (g_http_server.hasArg("state")) {
-    String st = g_http_server.arg("state");
-    if (st.equalsIgnoreCase("on"))  sg_core_set_pipe_enabled(true, true);
-    if (st.equalsIgnoreCase("off")) sg_core_set_pipe_enabled(false, true);
-  }
-  char buf[64];
-  snprintf(buf, sizeof(buf), "{\"enabled\":%s}", sg_core_pipe_enabled() ? "true" : "false");
-  g_http_server.send(200, "application/json", buf);
-}
-
-static void setup_http_ws() {
-  make_device_id();
-  sg_http_init(&g_http_ctx, g_device_id, 1);
-  g_http_server.on("/v1/occupancy", HTTP_GET, handle_http_occupancy);
-  g_http_server.on("/v1/occupancy", HTTP_OPTIONS, handle_http_options);
-  g_http_server.on("/v1/tracks", HTTP_GET, handle_http_tracks);
-  g_http_server.on("/v1/tracks", HTTP_OPTIONS, handle_http_options);
-  g_http_server.on("/v1/health", HTTP_GET, handle_http_health);
-  g_http_server.on("/v1/health", HTTP_OPTIONS, handle_http_options);
-  g_http_server.on("/v1/meas", HTTP_GET, handle_http_meas);
-  g_http_server.on("/v1/meas", HTTP_OPTIONS, handle_http_options);
-  g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
-  g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
-  g_http_server.on("/v1/info", HTTP_GET, handle_http_info);
-  g_http_server.on("/v1/info", HTTP_OPTIONS, handle_http_options);
-  g_http_server.on("/v1/pipe", HTTP_GET, handle_http_pipe);
-  g_http_server.on("/v1/pipe", HTTP_OPTIONS, handle_http_options);
-  g_http_server.begin();
-  g_ws_server.begin();
-  for (int i = 0; i < (int)(sizeof(g_ws_conns)/sizeof(g_ws_conns[0])); ++i) {
-    g_ws_conns[i].active = false;
-  }
-}
-
-static void mqtt_save_cfg() {
-  MqttRuntimeCfg cfg{};
-  strlcpy(cfg.host, MQTT_HOST, sizeof(cfg.host));
-  cfg.port = MQTT_PORT;
-  mqtt_config_save(&cfg);
-}
-
-static void mqtt_load_cfg() {
-  MqttRuntimeCfg def{};
-  strlcpy(def.host, MQTT_HOST, sizeof(def.host));
-  def.port = MQTT_PORT;
-  mqtt_config_load(&g_mqtt_cfg, &def);
-  strlcpy(MQTT_HOST, g_mqtt_cfg.host, sizeof(MQTT_HOST));
-  MQTT_PORT = g_mqtt_cfg.port;
-}
-
-static void on_mqtt_cmd(const char* payload, size_t len) {
-  if (!payload) return;
-  char txid[32]; json_get_str_key(payload, len, "\"txid\":\"", txid, sizeof(txid));
-  char op[32] = {0};
-  json_get_str_key(payload, len, "\"op\":\"", op, sizeof(op));
-  LOGI("[MQTT cmd] op=%s txid=%s", op, txid);
-  char ackbuf[256], errbuf[256];
-  if (!strcasecmp(op, "calib.start")) {
-    uint32_t dur = 60000;
-    json_get_int_key(payload, len, "dur_ms", dur);
-    if (dur == 0) dur = 60000;
-    bool ok = sg_core_calib_start(dur);
-    if (ok) {
-      mqtt_build_ack(txid, 1, ackbuf, sizeof(ackbuf));
-      sg_mqtt_pub_ack(ackbuf);
-    } else {
-      mqtt_build_err(txid, "busy", "calib in progress", errbuf, sizeof(errbuf));
-      sg_mqtt_pub_err(errbuf);
-    }
-    return;
-  }
-  if (!strcasecmp(op, "set")) {
-    char path[64];
-    if (!json_get_str_key(payload, len, "\"path\":\"", path, sizeof(path))) {
-      mqtt_build_err(txid, "bad_path", "path missing", errbuf, sizeof(errbuf));
-      sg_mqtt_pub_err(errbuf);
-      return;
-    }
-    if (!strcmp(path, "pipe.dist_max")) {
-      uint32_t v = 0; json_get_int_key(payload, len, "value", v);
-      if (v > 0 && v <= 10) v *= 100;
-      sg_core_set_range_cm((uint16_t)v, true);
-      sg_core_reset_baseline();
-      radar_set_presence_max(sg_core_get_range_cm());
-      g_after_cfg_ms = millis() + 1000;
-      mqtt_build_ack(txid, 1, ackbuf, sizeof(ackbuf));
-      sg_mqtt_pub_ack(ackbuf);
-      return;
-    }
-    mqtt_build_err(txid, "unknown_path", path, errbuf, sizeof(errbuf));
-    sg_mqtt_pub_err(errbuf);
-    return;
-  }
-  mqtt_build_err(txid, "unknown_op", op, errbuf, sizeof(errbuf));
-  sg_mqtt_pub_err(errbuf);
-}
-
-// MQTT config via CLI
-static void on_cli_mqtt(int argc, char* argv[], Print& out) {
-  if (argc < 2) {
-    out.println(F("[mqtt] uso: mqtt show | host <addr> | port <num> | restart"));
-    return;
-  }
-  const char* sub = argv[1];
-  if (!strcasecmp(sub, "show")) {
-    out.printf("[mqtt] host=%s port=%u\n", MQTT_HOST, (unsigned)MQTT_PORT);
-    return;
-  }
-  if (!strcasecmp(sub, "host") && argc >= 3) {
-    strlcpy(MQTT_HOST, argv[2], sizeof(MQTT_HOST));
-    mqtt_save_cfg();
-    out.printf("[mqtt] host salvo: %s\n", MQTT_HOST);
-    return;
-  }
-  if (!strcasecmp(sub, "port") && argc >= 3) {
-    uint32_t p=0; if (!parse_uint(argv[2], p)) { out.println(F("[mqtt] porta invalida")); return; }
-    MQTT_PORT = (uint16_t)p;
-    mqtt_save_cfg();
-    out.printf("[mqtt] port salvo: %u\n", (unsigned)MQTT_PORT);
-    return;
-  }
-  if (!strcasecmp(sub, "restart")) {
-    mqtt_save_cfg();
-    if (g_mqtt_enabled) {
-      SgMqttCfg cfg;
-      cfg.host = MQTT_HOST;
-      cfg.port = MQTT_PORT;
-      cfg.user = MQTT_USER;
-      cfg.pass = MQTT_PASS;
-      cfg.sb_ref = SB_REF;
-      cfg.device_id = g_device_id;
-      cfg.keepalive_s = 30;
-      sg_mqtt_init(&cfg, on_mqtt_cmd);
-      g_mqtt_was_connected = false;
-    }
-    out.println(F("[mqtt] restart solicitado"));
-    return;
-  }
-  out.println(F("[mqtt] comando invalido"));
 }
 
 // ---------------------- Setup/Loop ----------------------
@@ -1038,7 +549,10 @@ void setup() {
 
   net_service_init(&g_net_info);
 
-  mqtt_load_cfg();
+  sg_telemetry_init(&g_tctx, 1);
+  http_service_init(&g_tctx, &g_net_info);
+  mqtt_service_init(&g_tctx, on_range_applied);
+
 
   pinMode(SG_PIN_RADAR_OCC, INPUT_PULLDOWN);
 
@@ -1076,22 +590,10 @@ void setup() {
     /*pipe  */ on_cli_pipe,
     /*range */ on_cli_range,
     /*calib */ on_cli_calib,
-    /*mqtt  */ on_cli_mqtt
+    /*raw   */ on_cli_raw,
+    /*mqtt  */ mqtt_service_cli
   );
 
-  setup_http_ws();
-
-  if (g_mqtt_enabled) {
-    SgMqttCfg cfg;
-    cfg.host = MQTT_HOST;
-    cfg.port = MQTT_PORT;
-    cfg.user = MQTT_USER;
-    cfg.pass = MQTT_PASS;
-    cfg.sb_ref = SB_REF;
-    cfg.device_id = g_device_id;
-    cfg.keepalive_s = 30;
-    sg_mqtt_init(&cfg, on_mqtt_cmd);
-  }
 }
 
 void loop() {
@@ -1115,6 +617,15 @@ void loop() {
       g_last = p;
       g_has_last = true;
       g_last_seen_ms = millis();
+
+      bool dump_now = (g_raw_dump || g_raw_dump_left > 0);
+      if (dump_now) {
+        RadarRawFrame rf;
+        if (radar_get_last_raw(&rf)) {
+          print_raw_frame(rf);
+        }
+        if (g_raw_dump_left > 0) g_raw_dump_left--;
+      }
 
       g_core_snap = sg_core_step(&p, g_last_seen_ms);
 
@@ -1140,25 +651,7 @@ void loop() {
           last_emit = now;
         }
       }
-      if (g_mqtt_enabled && sg_mqtt_connected()) {
-        char env[384];
-        mqtt_build_meas(env, sizeof(env));
-        sg_mqtt_pub_meas(env);
-        char raw[384];
-        mqtt_build_meas_raw(raw, sizeof(raw));
-        if (raw[0]) sg_mqtt_pub_meas_raw(raw);
-        // publish event em transicao de estado
-        if (g_core_snap.pipe.stable != g_last_event_state) {
-          g_last_event_state = g_core_snap.pipe.stable;
-          const char* st = (g_last_event_state==0)?"empty":(g_last_event_state==1)?"presence":"motion";
-          char ev[256];
-          char payload[96];
-          snprintf(payload, sizeof(payload), "{\"class\":\"presence.changed\",\"state\":\"%s\"}", st);
-          sg_http_next_seq(&g_http_ctx);
-          sg_http_envelope(&g_http_ctx, g_last_seen_ms, "event", payload, ev, sizeof(ev));
-          sg_mqtt_pub_event(ev);
-        }
-      }
+      mqtt_service_on_measurement(&g_core_snap);
     }
   }
 
@@ -1178,41 +671,11 @@ void loop() {
   // 4) dreno ring (placeholder)
   SgSample out;
   (void)ring_pop(&g_ring, &out);
-
   // 5) HTTP/WS
-  g_http_server.handleClient();
-  ws_accept_clients();
-  unsigned long now = millis();
-  if (now - g_ws_last_emit >= WS_PERIOD_MS) {
-    g_ws_last_emit = now;
-    sg_http_next_seq(&g_http_ctx);
-    SgHttpOccupancy occ;
-    occ.ts_ms = now;
-    occ.state = (int)g_core_snap.pipe.stable;
-    occ.confidence = (g_core_snap.pipe.stable == SG_EMPTY) ? 0.1f : 0.9f;
-    char buf[256];
-    sg_http_make_occupancy(&g_http_ctx, &occ, buf, sizeof(buf));
-    ws_broadcast(buf);
-  }
+  http_service_loop(&g_core_snap);
 
   // 6) MQTT
-  if (g_mqtt_enabled) {
-    sg_mqtt_loop();
-    bool c = sg_mqtt_connected();
-    if (c && !g_mqtt_was_connected) {
-      char env[512];
-      mqtt_build_cap(env, sizeof(env)); sg_mqtt_pub_cap(env);
-      mqtt_build_status(env, sizeof(env)); sg_mqtt_pub_status(env);
-      mqtt_build_dt_meta(env, sizeof(env)); sg_mqtt_publish("dt/meta", env, true, 1);
-      mqtt_build_dt_status(env, sizeof(env)); sg_mqtt_publish("dt/st", env, true, 1);
-      mqtt_build_dt_ota(env, sizeof(env)); sg_mqtt_publish("dt/ota", env, true, 1);
-      mqtt_build_cfg_out(env, sizeof(env)); sg_mqtt_publish("dt/cfg/out/output_1", env, true, 1);
-      mqtt_build_cfg_in(env, sizeof(env)); sg_mqtt_publish("dt/cfg/in/input_1", env, true, 1);
-      mqtt_build_out_state(env, sizeof(env)); sg_mqtt_publish("dt/o/out/output_1", env, false, 0);
-      mqtt_build_in_state(env, sizeof(env)); sg_mqtt_publish("dt/o/in/input_1", env, false, 0);
-    }
-    g_mqtt_was_connected = c;
-  }
+  mqtt_service_loop();
 
   delay(2);
 }
