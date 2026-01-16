@@ -25,6 +25,7 @@
 #include "glue/sg_config_glue.h"
 #include "glue/sg_core_glue.h"
 #include "sg_core.h"
+#include "sg_adapters_logger.h"
 #include "../../components/config/sg_config_pipe.h"
 #include "telemetry_ctx.h"
 #include "http_service.h"
@@ -556,6 +557,8 @@ void setup() {
   net_service_init(&g_net_info);
 
   sg_telemetry_init(&g_tctx, 1);
+  sg_adapters_logger_init();
+  sg_adapters_logger_set_device_id(sg_telemetry_device_id(&g_tctx), 1);
   http_service_init(&g_tctx, &g_net_info);
   mqtt_service_init(&g_tctx, on_range_applied);
 
@@ -635,6 +638,7 @@ void loop() {
       }
 
       g_core_snap = sg_core_step(&p, g_last_seen_ms);
+      sg_adapters_logger_on_measurement(&g_core_snap);
 
       // ring buffer
       SgSample s {

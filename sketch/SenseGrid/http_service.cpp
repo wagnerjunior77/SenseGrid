@@ -7,6 +7,7 @@
 #include <string.h>
 #include <ctype.h>
 #include "net_service.h"
+#include "sg_adapters_logger.h"
 
 static WebServer g_http_server(80);
 static WiFiServer g_ws_server(81);
@@ -500,6 +501,18 @@ static void handle_http_pipe() {
   g_http_server.send(200, "application/json", buf);
 }
 
+static void handle_http_diagnostics_export() {
+  http_set_cors();
+  int was_enabled = sg_adapters_logger_enabled();
+  sg_adapters_logger_set_enabled(0);
+  unsigned long total = sg_adapters_logger_size();
+  g_http_server.setContentLength(total);
+  g_http_server.send(200, "application/x-ndjson", "");
+  WiFiClient client = g_http_server.client();
+  sg_adapters_logger_export(client);
+  sg_adapters_logger_set_enabled(was_enabled);
+}
+
 void http_service_init(SgTelemetryCtx* tctx, SgNetInfo* net_info) {
   g_tctx = tctx;
   g_net_info = net_info;
@@ -513,10 +526,16 @@ void http_service_init(SgTelemetryCtx* tctx, SgNetInfo* net_info) {
   g_http_server.on("/v1/tracks", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/health", HTTP_GET, handle_http_health);
   g_http_server.on("/v1/health", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/diagnostics/status", HTTP_GET, handle_http_health);
+  g_http_server.on("/v1/diagnostics/status", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/meas", HTTP_GET, handle_http_meas);
   g_http_server.on("/v1/meas", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/kpi", HTTP_GET, handle_http_kpi);
   g_http_server.on("/v1/kpi", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/diagnostics/kpi", HTTP_GET, handle_http_kpi);
+  g_http_server.on("/v1/diagnostics/kpi", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/diagnostics/export", HTTP_GET, handle_http_diagnostics_export);
+  g_http_server.on("/v1/diagnostics/export", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
   g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/info", HTTP_GET, handle_http_info);

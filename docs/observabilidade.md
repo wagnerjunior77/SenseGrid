@@ -71,6 +71,8 @@ Extensao futura (sensores com angulo):
 ## Endpoints e topicos (planejado)
 HTTP:
 - GET `/v1/kpi`
+- GET `/v1/diagnostics/kpi` (alias de /v1/kpi)
+- GET `/v1/diagnostics/status` (alias de /v1/health)
 - GET `/v1/heatmap`
 - GET `/v1/diagnostics/export` -> stream `.jsonl`
 
