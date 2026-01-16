@@ -24,6 +24,23 @@ typedef struct {
   uint16_t    range_cm;
 } SgCoreSnapshot;
 
+typedef struct {
+  uint32_t window_ms;
+  uint32_t window_start_ms;
+  uint32_t window_end_ms;
+  uint32_t meas_total;
+  uint32_t meas_valid;
+  float    snr_avg;
+  uint32_t latency_avg_ms;
+  uint32_t latency_max_ms;
+  float    state_ratio_empty;
+  float    state_ratio_presence;
+  float    state_ratio_motion;
+  uint32_t transition_count;
+  float    fp_proxy_ratio;
+  float    fn_proxy_ratio;
+} SgCoreKpi;
+
 // Init pipeline/core. Se cfg for null, usa defaults e carrega NVS.
 void sg_core_init(const SgCoreConfig* cfg);
 
@@ -53,6 +70,13 @@ SgCalibState    sg_core_calib_state();
 SgCalibMetrics  sg_core_calib_metrics(uint32_t now_ms);
 SgCalibSuggest  sg_core_calib_suggest();
 bool sg_core_calib_apply(bool persist);
+
+// KPI (janela de observabilidade)
+void sg_core_kpi_reset();
+void sg_core_kpi_set_window_ms(uint32_t window_ms);
+uint32_t sg_core_kpi_window_ms();
+bool sg_core_kpi_poll(SgCoreKpi* out);
+const SgCoreKpi* sg_core_kpi_last();
 
 #ifdef __cplusplus
 }

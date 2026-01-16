@@ -19,11 +19,15 @@ Resumo de janela fixa (ex: 60s). Campos sugeridos:
   "meas_total": 1200,
   "meas_valid": 1080,
   "snr_avg": 0.23,
+  "latency_avg_ms": 52,
+  "latency_max_ms": 140,
   "snr_p95": 0.80,
   "dist_p50_cm": 120,
   "dist_p95_cm": 280,
   "state_ratio": { "empty": 0.60, "presence": 0.30, "motion": 0.10 },
   "transition_count": 12,
+  "fp_proxy_ratio": 0.03,
+  "fn_proxy_ratio": 0.05,
   "stale_ratio": 0.02
 }
 ```
@@ -31,6 +35,8 @@ Resumo de janela fixa (ex: 60s). Campos sugeridos:
 Notas:
 - `meas_valid` e `stale_ratio` ajudam a detectar perda de frames.
 - percentis sao calculados sobre o periodo da janela.
+- `fp/fn proxy` compara raw vs estado estabilizado; nao e ground truth.
+- `latency_*` representa o delta entre frames (gap medio/max).
 
 ## Heatmap (type = "heatmap")
 Heatmap 1D por distancia (padrao para ME73 sem angulos confiaveis).

@@ -164,6 +164,29 @@ static bool json_get_bool_key(const char* payload, size_t len, const char* key_w
   return false;
 }
 
+static bool kpi_build_payload(const SgCoreKpi* kpi, char* out, size_t out_sz) {
+  if (!kpi || !out || out_sz == 0) return false;
+  int n = snprintf(out, out_sz,
+    "{\"window_ms\":%lu,\"meas_total\":%lu,\"meas_valid\":%lu,\"snr_avg\":%.3f,"
+    "\"latency_avg_ms\":%lu,\"latency_max_ms\":%lu,"
+    "\"state_ratio\":{\"empty\":%.3f,\"presence\":%.3f,\"motion\":%.3f},"
+    "\"transition_count\":%lu,\"fp_proxy_ratio\":%.3f,\"fn_proxy_ratio\":%.3f}",
+    (unsigned long)kpi->window_ms,
+    (unsigned long)kpi->meas_total,
+    (unsigned long)kpi->meas_valid,
+    kpi->snr_avg,
+    (unsigned long)kpi->latency_avg_ms,
+    (unsigned long)kpi->latency_max_ms,
+    kpi->state_ratio_empty,
+    kpi->state_ratio_presence,
+    kpi->state_ratio_motion,
+    (unsigned long)kpi->transition_count,
+    kpi->fp_proxy_ratio,
+    kpi->fn_proxy_ratio
+  );
+  return (n > 0);
+}
+
 static void handle_http_occupancy() {
   SgHttpCtx* ctx = sg_telemetry_http_ctx(g_tctx);
   if (!ctx) return;
@@ -233,6 +256,27 @@ static void handle_http_meas() {
   );
   (void)n;
   http_send_json(buf);
+}
+
+static void handle_http_kpi() {
+  const SgCoreKpi* kpi = sg_core_kpi_last();
+  if (!kpi || kpi->window_end_ms == 0) {
+    http_set_cors();
+    g_http_server.send(404, "application/json", "{\"error\":\"kpi_not_ready\"}");
+    return;
+  }
+  SgHttpCtx* ctx = sg_telemetry_http_ctx(g_tctx);
+  if (!ctx) return;
+  sg_http_next_seq(ctx);
+  char payload[320];
+  if (!kpi_build_payload(kpi, payload, sizeof(payload))) {
+    http_set_cors();
+    g_http_server.send(500, "application/json", "{\"error\":\"kpi_build_failed\"}");
+    return;
+  }
+  char env[512];
+  sg_http_envelope(ctx, kpi->window_end_ms, "kpi", payload, env, sizeof(env));
+  http_send_json(env);
 }
 
 static void handle_http_options() {
@@ -471,6 +515,8 @@ void http_service_init(SgTelemetryCtx* tctx, SgNetInfo* net_info) {
   g_http_server.on("/v1/health", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/meas", HTTP_GET, handle_http_meas);
   g_http_server.on("/v1/meas", HTTP_OPTIONS, handle_http_options);
+  g_http_server.on("/v1/kpi", HTTP_GET, handle_http_kpi);
+  g_http_server.on("/v1/kpi", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
   g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/info", HTTP_GET, handle_http_info);

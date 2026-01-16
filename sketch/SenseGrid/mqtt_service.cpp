@@ -14,6 +14,7 @@ static const char* SB_REF   = "sb01";
 static bool g_mqtt_enabled = true;
 static bool g_mqtt_was_connected = false;
 static int g_last_event_state = -1;
+static uint32_t g_last_kpi_end_ms = 0;
 static MqttRuntimeCfg g_mqtt_cfg{};
 static SgTelemetryCtx* g_tctx = nullptr;
 static MqttApplyRangeFn g_apply_range_cb = nullptr;
@@ -76,6 +77,36 @@ static void mqtt_build_meas_raw(char* out, size_t out_sz) {
     (unsigned long)snap->pipe.stable_ms,
     snap->in_range ? "true" : "false"
   );
+}
+
+static bool mqtt_build_kpi(const SgCoreKpi* kpi, char* out, size_t out_sz) {
+  if (!kpi || !out || out_sz==0) { if (out_sz>0) out[0]=0; return false; }
+  char payload[320];
+  int n = snprintf(payload, sizeof(payload),
+    "{\"window_ms\":%lu,\"meas_total\":%lu,\"meas_valid\":%lu,\"snr_avg\":%.3f,"
+    "\"latency_avg_ms\":%lu,\"latency_max_ms\":%lu,"
+    "\"state_ratio\":{\"empty\":%.3f,\"presence\":%.3f,\"motion\":%.3f},"
+    "\"transition_count\":%lu,\"fp_proxy_ratio\":%.3f,\"fn_proxy_ratio\":%.3f}",
+    (unsigned long)kpi->window_ms,
+    (unsigned long)kpi->meas_total,
+    (unsigned long)kpi->meas_valid,
+    kpi->snr_avg,
+    (unsigned long)kpi->latency_avg_ms,
+    (unsigned long)kpi->latency_max_ms,
+    kpi->state_ratio_empty,
+    kpi->state_ratio_presence,
+    kpi->state_ratio_motion,
+    (unsigned long)kpi->transition_count,
+    kpi->fp_proxy_ratio,
+    kpi->fn_proxy_ratio
+  );
+  if (n <= 0) { out[0]=0; return false; }
+  SgHttpCtx* ctx = sg_telemetry_http_ctx(g_tctx);
+  if (!ctx) { out[0]=0; return false; }
+  sg_http_next_seq(ctx);
+  uint32_t ts = kpi->window_end_ms ? kpi->window_end_ms : millis();
+  sg_http_envelope(ctx, ts, "kpi", payload, out, out_sz);
+  return true;
 }
 
 static void mqtt_build_status(char* out, size_t out_sz) {
@@ -317,6 +348,16 @@ void mqtt_service_on_measurement(const SgCoreSnapshot* snap) {
       sg_http_next_seq(ctx);
       sg_http_envelope(ctx, snap->meas_ms, "event", payload, ev, sizeof(ev));
       sg_mqtt_pub_event(ev);
+    }
+  }
+
+  const SgCoreKpi* kpi = sg_core_kpi_last();
+  if (kpi && kpi->window_end_ms > 0 && kpi->window_end_ms != g_last_kpi_end_ms) {
+    char kpi_env[512];
+    if (mqtt_build_kpi(kpi, kpi_env, sizeof(kpi_env))) {
+      if (sg_mqtt_publish("kpi", kpi_env, false, 0)) {
+        g_last_kpi_end_ms = kpi->window_end_ms;
+      }
     }
   }
 }
