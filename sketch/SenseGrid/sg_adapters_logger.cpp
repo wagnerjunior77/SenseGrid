@@ -11,9 +11,11 @@ static SgSerCtx g_ser{};
 static bool g_ser_ready = false;
 static int g_last_state = -1;
 static uint32_t g_last_kpi_end = 0;
+static uint32_t g_last_meas_log_ms = 0;
 
 static const size_t LOG_MAX_BYTES = 256 * 1024;
 static const int LOG_ROTATE_COUNT = 3;
+static const uint32_t LOG_MEAS_PERIOD_MS = 200;
 
 static void log_path(int idx, char* out, size_t out_sz) {
   if (!out || out_sz == 0) return;
@@ -71,6 +73,9 @@ extern "C" void sg_adapters_logger_init(void) {
   if (g_inited) return;
   g_inited = SPIFFS.begin(true);
   g_enabled = g_inited;
+  g_last_meas_log_ms = 0;
+  g_last_state = -1;
+  g_last_kpi_end = 0;
 }
 
 extern "C" void sg_adapters_logger_set_enabled(int enable) {
@@ -111,32 +116,38 @@ extern "C" unsigned long sg_adapters_logger_size(void) {
 
 bool sg_adapters_logger_on_measurement(const SgCoreSnapshot* snap) {
   if (!g_ser_ready || !snap || !snap->has_meas) return false;
+  uint32_t now_ms = snap->meas_ms;
+  bool log_meas = (g_last_meas_log_ms == 0) || ((now_ms - g_last_meas_log_ms) >= LOG_MEAS_PERIOD_MS);
+  if (log_meas) g_last_meas_log_ms = now_ms;
   char payload[256];
-  int pn = snprintf(payload, sizeof(payload),
-    "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
-    "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
-    "\"az_deg\":%d,\"el_deg\":%d,"
-    "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
-    (unsigned long)snap->meas_ms,
-    (snap->meas.status == 0 ? "none" : snap->meas.status == 1 ? "move" : snap->meas.status == 2 ? "exist" : "?"),
-    snap->meas.distance_cm * 0.01f,
-    snap->meas.speed_cms * 0.01f,
-    snap->meas.snr,
-    snap->meas.distance_cm,
-    (int)snap->meas.speed_cms,
-    snap->meas.signal,
-    (int)snap->meas.azim_deg,
-    (int)snap->meas.elev_deg,
-    (int)snap->pipe.state,
-    (int)snap->pipe.stable,
-    (unsigned long)snap->pipe.stable_ms,
-    snap->in_range ? "true" : "false"
-  );
-  if (pn <= 0) return false;
-  char env[384];
-  sg_ser_next_seq(&g_ser);
-  sg_ser_envelope(&g_ser, snap->meas_ms, "meas", payload, env, sizeof(env));
-  log_append_line(env);
+  if (log_meas) {
+    int pn = snprintf(payload, sizeof(payload),
+      "{\"ts_ms\":%lu,\"status\":\"%s\",\"dist_m\":%.3f,\"speed_mps\":%.3f,"
+      "\"snr\":%.3f,\"distance_cm\":%u,\"speed_cms\":%d,\"signal\":%u,"
+      "\"az_deg\":%d,\"el_deg\":%d,"
+      "\"state\":%d,\"stable\":%d,\"stable_ms\":%lu,\"in_range\":%s}",
+      (unsigned long)snap->meas_ms,
+      (snap->meas.status == 0 ? "none" : snap->meas.status == 1 ? "move" : snap->meas.status == 2 ? "exist" : "?"),
+      snap->meas.distance_cm * 0.01f,
+      snap->meas.speed_cms * 0.01f,
+      snap->meas.snr,
+      snap->meas.distance_cm,
+      (int)snap->meas.speed_cms,
+      snap->meas.signal,
+      (int)snap->meas.azim_deg,
+      (int)snap->meas.elev_deg,
+      (int)snap->pipe.state,
+      (int)snap->pipe.stable,
+      (unsigned long)snap->pipe.stable_ms,
+      snap->in_range ? "true" : "false"
+    );
+    if (pn > 0) {
+      char env[384];
+      sg_ser_next_seq(&g_ser);
+      sg_ser_envelope(&g_ser, snap->meas_ms, "meas", payload, env, sizeof(env));
+      log_append_line(env);
+    }
+  }
 
   if (g_last_state < 0) g_last_state = snap->pipe.stable;
   if (snap->pipe.stable != g_last_state) {
