@@ -1,4 +1,4 @@
-# Observabilidade - esquema de telemetria (kpi, heatmap, log)
+# Observabilidade - esquema de telemetria (kpi, log)
 
 Objetivo: definir payloads e endpoints para diagnostico e observabilidade.
 Todo texto novo em ASCII.
@@ -38,54 +38,22 @@ Notas:
 - `fp/fn proxy` compara raw vs estado estabilizado; nao e ground truth.
 - `latency_*` representa o delta entre frames (gap medio/max).
 
-## Heatmap (type = "heatmap")
-Heatmap 1D por distancia (padrao para ME73 sem angulos confiaveis).
-
-```json
-{
-  "type": "range_1d",
-  "window_ms": 60000,
-  "bin_cm": 50,
-  "range_cm": 600,
-  "metric": "count",
-  "bins": [0, 2, 10, 4, 1, 0, 0, 0, 0, 0, 0, 0]
-}
-```
-
-Campos:
-- `bin_cm`: largura do bin em cm
-- `range_cm`: range total coberto (bins * bin_cm)
-- `metric`: `count` ou `snr_avg`
-- `bins`: array com uma posicao por faixa de distancia
-
-Extensao futura (sensores com angulo):
-```json
-{
-  "type": "grid_2d",
-  "grid_w": 3,
-  "grid_h": 2,
-  "bins": [0, 1, 4, 2, 0, 0]
-}
-```
-
 ## Endpoints e topicos (planejado)
 HTTP:
 - GET `/v1/kpi`
 - GET `/v1/diagnostics/kpi` (alias de /v1/kpi)
 - GET `/v1/diagnostics/status` (alias de /v1/health)
-- GET `/v1/heatmap`
 - GET `/v1/diagnostics/export` -> stream `.jsonl`
+- GET `/diagnostics` -> pagina HTML com cards de KPI
 
 MQTT:
 - `.../kpi` (type = "kpi")
-- `.../heatmap` (type = "heatmap")
 
 ## Log estruturado (.jsonl)
 Cada linha eh um envelope JSON. Tipos recomendados:
 - `meas` (medida)
 - `event` (mudanca de estado)
 - `kpi`
-- `heatmap`
 
 Exemplo:
 ```json
