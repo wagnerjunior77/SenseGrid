@@ -204,6 +204,10 @@ static void cli_help(Print& out) {
   out.println(F("  calib start|status|apply|abort|reset|preview|profile save|profile load"));
   out.println(F("  raw on|off|once -> dump frame bruto (hex)"));
   out.println(F("  wifi show|set|ap|clear|apply"));
+  out.println(F("  wifi set <ssid> <pass>"));
+  out.println(F("  wifi ap <ssid> [pass]"));
+  out.println(F("  wifi clear [sta|ap|all]"));
+  out.println(F("  mqtt show|host <addr>|port <num>|restart"));
 }
 static void cli_info(Print& out) {
   out.print(F("UART1 RX=")); out.print(SG_RADAR_RX);

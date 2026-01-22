@@ -13,7 +13,7 @@ static uint32_t g_samples_valid = 0;
 static double   g_snr_mean = 0.0;
 static double   g_snr_m2   = 0.0;
 
-// Histograma de dist�ncia (bins de 10 cm at� 700 cm)
+// Histograma de distancia (bins de 10 cm ate 700 cm)
 static const uint16_t HIST_BIN_CM = 10;
 static const uint16_t HIST_MAX_CM = 700;
 static const int      HIST_BINS   = (HIST_MAX_CM / HIST_BIN_CM) + 1;
@@ -78,13 +78,13 @@ void sg_calib_push_sample(const SgPipeIn* in) {
     if (snr < 0.0f) snr = 0.0f;
     if (snr > 1.0f) snr = 1.0f;
 
-    // Welford para m�dia/vari�ncia
+    // Welford para media/variancia
     double delta = snr - g_snr_mean;
     g_snr_mean += delta / (double)g_samples_valid;
     double delta2 = snr - g_snr_mean;
     g_snr_m2 += delta * delta2;
 
-    // Hist de dist�ncia
+    // Hist de distancia
     uint16_t clamped = (in->dist_cm > HIST_MAX_CM) ? HIST_MAX_CM : in->dist_cm;
     int bin = clamped / HIST_BIN_CM;
     if (bin < 0) bin = 0;
@@ -144,7 +144,7 @@ SgCalibSuggest sg_calib_build_suggest(const SgParams* base) {
   }
   SgCalibMetrics m = sg_calib_metrics(g_t_last);
   SgCalibSuggest s;
-  // Valores default iguais ao base (mant�m caso n�o haja dados)
+  // Valores default iguais ao base (mantem caso nao haja dados)
   s.max_range_cm   = base->max_range_cm;
   s.snr_min        = base->snr_min;
   s.delta_exist    = base->delta_exist;
