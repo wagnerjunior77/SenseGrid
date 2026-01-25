@@ -66,7 +66,7 @@ Requisitos:
 
 8. **Arduino (portable): Upload (from exported binaries)**  
    Faz o flash usando os binarios exportados.  
-   > Configure a porta em `settings.json`: `"sensegrid.serialPort": "COM5"`
+   > Porta auto-detectada por padrao. Para fixar, use `settings.json` ou `SENSEGRID_PORT`.
 
 9. **Arduino (portable): Monitor**  
    Abre o serial monitor a **115200**.
@@ -77,7 +77,7 @@ Requisitos:
 ```json
 {
   "sensegrid.fqbn": "esp32:esp32:esp32c3",
-  "sensegrid.serialPort": "COM5",
+  "sensegrid.serialPort": "AUTO",
   "sensegrid.coreVersion": "3.3.2"
 }
 ```

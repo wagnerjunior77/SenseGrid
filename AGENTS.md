@@ -40,7 +40,7 @@
 **Config padrão versionada** (`.vscode/settings.json`):  
 - `sensegrid.fqbn = esp32:esp32:esp32c3`  
 - `sensegrid.coreVersion = 3.3.2`  
-- `sensegrid.serialPort = COM5`
+- `sensegrid.serialPort = AUTO` (auto-detect)
 
 **Saída esperada:** artefatos em `toolchain/build/SenseGrid/`.
 
@@ -58,7 +58,7 @@
   toolchain\arduino-cli.exe monitor `
     --config-file toolchain\arduino-cli.yaml `
     -p COM5 -c baudrate=115200
-Troque COM5 se necessário. O repo assume COM5 por padrão.
+Troque COM5 se necessário (ou defina `SENSEGRID_PORT`). As tasks de Upload/Monitor auto-detectam a porta por padrão.
 
 3) CLI (Serial) — comandos suportados
 pgsql
@@ -160,7 +160,7 @@ Core: 3.3.2
 
 Baud: 115200
 
-Serial port: COM5 (ajustável)
+Serial port: AUTO (detectado)
 
 12) Roadmap curto (A3)
 components/pipeline/ com API:
