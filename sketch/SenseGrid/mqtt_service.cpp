@@ -2,8 +2,8 @@
 #include <string.h>
 #include <strings.h>
 #include <stdlib.h>
-#include "../../components/adapters_mqtt/include/adapters_mqtt.h"
-#include "../../components/adapters_http/include/adapters_http.h"
+#include "components/adapters_mqtt/include/adapters_mqtt.h"
+#include "components/adapters_http/include/adapters_http.h"
 #include "mqtt_config.h"
 
 static char g_mqtt_host[64] = "192.168.15.9"; // ajuste conforme broker

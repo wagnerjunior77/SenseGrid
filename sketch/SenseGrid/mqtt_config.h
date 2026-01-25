@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "../../../components/config/sg_config.h"
+#include "components/config/sg_config.h"
 
 struct MqttRuntimeCfg {
   char     host[64];

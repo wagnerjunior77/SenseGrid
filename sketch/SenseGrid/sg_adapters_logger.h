@@ -14,7 +14,7 @@ unsigned long sg_adapters_logger_size(void);
 
 #ifdef __cplusplus
 #include <Arduino.h>
-#include "../../components/core/sg_core.h"
+#include "components/core/sg_core.h"
 bool sg_adapters_logger_on_measurement(const SgCoreSnapshot* snap);
 bool sg_adapters_logger_export(Print& out);
 #endif

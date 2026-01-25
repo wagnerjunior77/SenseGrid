@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "../../components/core/sg_core.h"
+#include "components/core/sg_core.h"
 #include "telemetry_ctx.h"
 
 typedef void (*MqttApplyRangeFn)(uint16_t cm);

@@ -1,2 +1,2 @@
 #pragma once
-#include "../../../components/cli/sg_cli.h"
+#include "components/cli/sg_cli.h"

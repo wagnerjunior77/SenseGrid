@@ -3,7 +3,7 @@
 #include <SPIFFS.h>
 #include <string.h>
 #include "sg_adapters_logger.h"
-#include "../../components/serializer/sg_serializer.h"
+#include "components/serializer/sg_serializer.h"
 
 static bool g_inited = false;
 static bool g_enabled = true;

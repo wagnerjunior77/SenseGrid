@@ -1,1 +1,1 @@
-#include "../../components/cli/sg_cli.cpp"
+#include "components/cli/sg_cli.cpp"

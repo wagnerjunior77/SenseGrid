@@ -1,6 +1,6 @@
 #pragma once
 #include <Arduino.h>
-#include "../../../components/net/sg_net.h"
+#include "components/net/sg_net.h"
 
 // Inicializa rede (AP+STA) e loga estado resumido.
 void net_service_init(SgNetInfo* info);

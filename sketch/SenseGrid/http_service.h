@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "../../components/core/sg_core.h"
+#include "components/core/sg_core.h"
 #include "telemetry_ctx.h"
 
 struct SgNetInfo;

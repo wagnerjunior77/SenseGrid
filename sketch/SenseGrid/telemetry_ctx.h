@@ -1,6 +1,6 @@
 #pragma once
 #include <stdint.h>
-#include "../../components/adapters_http/include/adapters_http.h"
+#include "components/adapters_http/include/adapters_http.h"
 
 struct SgTelemetryCtx {
   char     device_id[24];

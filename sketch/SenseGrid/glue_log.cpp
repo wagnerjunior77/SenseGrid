@@ -1,1 +1,1 @@
-#include "../../components/util/sg_log.cpp"
+#include "components/util/sg_log.cpp"

@@ -26,11 +26,11 @@
 #include "glue/sg_core_glue.h"
 #include "sg_core.h"
 #include "sg_adapters_logger.h"
-#include "../../components/config/sg_config_pipe.h"
+#include "components/config/sg_config_pipe.h"
 #include "telemetry_ctx.h"
 #include "http_service.h"
 #include "mqtt_service.h"
-#include "../../components/config/sg_config_profiles.h"
+#include "components/config/sg_config_profiles.h"
 #include "net_service.h"
 
 // ---------------------- Log simples (0=ERR,1=WARN,2=INFO,3=DBG) ----------------------

@@ -5,18 +5,24 @@ param(
   [string]$Fqbn,
   [string]$IncludeFile = "$PSScriptRoot\include-dirs.txt",
   [string]$BuildPath   = "$PSScriptRoot\build\SenseGrid",
-  [switch]$ExportBinaries
+  [switch]$ExportBinaries,
+  [switch]$Clean
 )
 
 $ErrorActionPreference = "Stop"
 
 # Lê include-dirs.txt (ignora linhas vazias e comentários)
-$incs = Get-Content -Raw $IncludeFile |
-  Select-String -Pattern '^(?!\s*#).+\S' -AllMatches |
-  ForEach-Object { $_.Matches.Value.Trim() }
+$incs = Get-Content $IncludeFile |
+  Where-Object { $_ -notmatch '^\s*#' -and $_.Trim() -ne '' } |
+  ForEach-Object { $_.Trim() }
 
-# Resolve caminhos (normaliza barra)
-$incsAbs = $incs | ForEach-Object { (Resolve-Path $_).Path -replace '\\','/' }
+# Resolve caminhos (normaliza barra) e ignora entradas inexistentes
+$incsExisting = $incs | Where-Object { Test-Path $_ -PathType Container }
+$incsMissing = $incs | Where-Object { -not (Test-Path $_ -PathType Container) }
+if ($incsMissing) {
+  Write-Warning ("Include path(s) not found: " + ($incsMissing -join ', '))
+}
+$incsAbs = $incsExisting | ForEach-Object { (Resolve-Path $_).Path -replace '\\','/' }
 $flags = '-DCONFIG_NIMBLE_CPP_IDF=1 ' + (($incsAbs | ForEach-Object { '-I' + $_ }) -join ' ')
 
 # Garante pasta de build
@@ -32,6 +38,7 @@ $args = @(
 )
 
 if ($ExportBinaries) { $args += '--export-binaries' }
+if ($Clean) { $args += '--clean' }
 
 $args += $SketchPath
 
