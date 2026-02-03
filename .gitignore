@@ -27,6 +27,8 @@ toolchain/*
 !toolchain/build-arduino.ps1
 !toolchain/install-cp210x-driver.ps1
 !toolchain/prefetch-discovery-tools.ps1
+!toolchain/upload-arduino.ps1
+!toolchain/monitor-arduino.ps1
 !toolchain/include-dirs.txt
 !toolchain/bundled-tools/
 !toolchain/bundled-tools/**
