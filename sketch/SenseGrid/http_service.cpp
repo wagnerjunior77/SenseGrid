@@ -8,6 +8,7 @@
 #include <ctype.h>
 #include "net_service.h"
 #include "sg_adapters_logger.h"
+#include "http_monitor_page.h"
 
 static WebServer g_http_server(80);
 static WiFiServer g_ws_server(81);
@@ -649,6 +650,10 @@ static void handle_http_diagnostics_page() {
   g_http_server.send(200, "text/html", k_html);
 }
 
+static void handle_http_monitor_page() {
+  g_http_server.send(200, "text/html", k_monitor_html);
+}
+
 static void handle_http_diagnostics_export() {
   http_set_cors();
   int was_enabled = sg_adapters_logger_enabled();
@@ -685,6 +690,8 @@ void http_service_init(SgTelemetryCtx* tctx, SgNetInfo* net_info) {
   g_http_server.on("/v1/diagnostics/export", HTTP_GET, handle_http_diagnostics_export);
   g_http_server.on("/v1/diagnostics/export", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/diagnostics", HTTP_GET, handle_http_diagnostics_page);
+  g_http_server.on("/monitor", HTTP_GET, handle_http_monitor_page);
+  g_http_server.on("/dashboard", HTTP_GET, handle_http_monitor_page);
   g_http_server.on("/v1/cmd", HTTP_POST, handle_http_cmd);
   g_http_server.on("/v1/cmd", HTTP_OPTIONS, handle_http_options);
   g_http_server.on("/v1/info", HTTP_GET, handle_http_info);

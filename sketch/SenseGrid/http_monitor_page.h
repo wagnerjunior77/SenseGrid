@@ -1,3 +1,6 @@
+#pragma once
+// Source: tools/dashboard/index.html (keep in sync)
+static const char k_monitor_html[] = R"SG_MONITOR_HTML(
 <!doctype html>
 <html lang="en">
 <head>
@@ -251,3 +254,5 @@
   </script>
 </body>
 </html>
+
+)SG_MONITOR_HTML";
