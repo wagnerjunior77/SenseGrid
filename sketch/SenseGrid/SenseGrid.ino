@@ -15,6 +15,7 @@
 #include "pins_radar.h"
 #include "glue/hal_uart_glue.h"
 #include "glue/drv_radar_me73_glue.h"
+#include "glue/drv_radar_ld2410c_glue.h"
 #include "glue/ring_samples_glue.h"
 #include "glue/sg_cli_glue.h"    // sg_cli_set_handlers()/sg_cli_poll()
 #include "glue/sg_pipe_glue.h"   // inclui pipeline e helpers
@@ -41,9 +42,16 @@ static int g_log_level = 2;
 #define LOGD(...) do{ if(g_log_level>=3){ Serial.printf("[DEBUG] "); Serial.printf(__VA_ARGS__); Serial.println(); } }while(0)
 
 // ---------------------- Globals ----------------------
-UartHandle  g_uart;
-RadarHandle g_radar_ctx;
-SgRadar     g_radar = { &SG_RADAR_ME73_OPS, &g_radar_ctx };
+UartHandle    g_uart;
+RadarHandle   g_radar_me_ctx;
+Ld2410cHandle g_radar_ld_ctx;
+SgRadar       g_radar = { nullptr, nullptr };
+
+enum RadarKind {
+  RADAR_ME73 = 0,
+  RADAR_LD2410C = 1
+};
+static RadarKind g_radar_kind = RADAR_ME73;
 
 static SgSample g_samples[256];
 SgRing g_ring;
@@ -59,6 +67,13 @@ static bool  g_stream_json = true;
 static unsigned long g_stream_period_ms = 50; // ~20 Hz
 static bool g_raw_dump = false;
 static uint16_t g_raw_dump_left = 0;
+
+// radar detect/config
+static const uint32_t RADAR_BAUD_ME73 = 115200;
+static const uint32_t RADAR_BAUD_LD2410C = 256000;
+static const uint32_t RADAR_DETECT_TIMEOUT_MS = 1500;
+static const uint16_t LD2410C_GATE_CM = 75;
+static const uint16_t LD2410C_NO_ONE_S = 3;
 
 // core/pipeline
 static SgCoreSnapshot g_core_snap;
@@ -112,6 +127,14 @@ static const char* status_str(uint8_t s) {
   }
 }
 
+static const char* radar_kind_str(RadarKind k) {
+  switch (k) {
+    case RADAR_LD2410C: return "LD2410C";
+    case RADAR_ME73:
+    default: return "ME73";
+  }
+}
+
 static void uart_drain_rx(UartHandle* h, uint32_t max_ms=50) {
   if (!h || !h->impl) return;
   HardwareSerial* ser = reinterpret_cast<HardwareSerial*>(h->impl);
@@ -120,6 +143,51 @@ static void uart_drain_rx(UartHandle* h, uint32_t max_ms=50) {
     while (ser->available() > 0) { ser->read(); }
     delay(2);
   }
+}
+
+static bool radar_select_me73() {
+  if (!uart_begin(&g_uart, SG_RADAR_UART_NUM, RADAR_BAUD_ME73, SG_RADAR_RX, SG_RADAR_TX)) return false;
+  uart_drain_rx(&g_uart, 50);
+  g_radar.ops = &SG_RADAR_ME73_OPS;
+  g_radar.ctx = &g_radar_me_ctx;
+  return sg_radar_begin(&g_radar, &g_uart);
+}
+
+static bool radar_select_ld2410c() {
+  if (!uart_begin(&g_uart, SG_RADAR_UART_NUM, RADAR_BAUD_LD2410C, SG_RADAR_RX, SG_RADAR_TX)) return false;
+  uart_drain_rx(&g_uart, 50);
+  g_radar.ops = &SG_RADAR_LD2410C_OPS;
+  g_radar.ctx = &g_radar_ld_ctx;
+  return sg_radar_begin(&g_radar, &g_uart);
+}
+
+static bool radar_try_kind(RadarKind k, uint32_t timeout_ms) {
+  if (k == RADAR_LD2410C) {
+    if (!radar_select_ld2410c()) return false;
+  } else {
+    if (!radar_select_me73()) return false;
+  }
+
+  uint32_t t0 = millis();
+  RadarParsed p;
+  while ((millis() - t0) < timeout_ms) {
+    if (sg_radar_read_parsed(&g_radar, &p, 80)) return true;
+  }
+  return false;
+}
+
+static bool radar_autodetect() {
+  if (radar_try_kind(RADAR_LD2410C, RADAR_DETECT_TIMEOUT_MS)) {
+    g_radar_kind = RADAR_LD2410C;
+    return true;
+  }
+  if (radar_try_kind(RADAR_ME73, RADAR_DETECT_TIMEOUT_MS)) {
+    g_radar_kind = RADAR_ME73;
+    return true;
+  }
+  // fallback: keep ME73 configured to avoid null ops
+  g_radar_kind = RADAR_ME73;
+  return radar_select_me73();
 }
 
 static void radar_send(const uint8_t* cmd, size_t n) {
@@ -170,14 +238,19 @@ static const uint8_t SET_VO_HOLD_3S[]           = {0x55,0x5A,0x00,0x06,0x01,0x80
 static const uint8_t SAVE_ALL[]                 = {0x55,0x5A,0x00,0x04,0x01,0x20,0x04,0xD8};
 
 static void radar_config_boot() {
-  LOGI("[CFG] VO hold = 3000 ms");
-  radar_send(SET_VO_HOLD_3S, sizeof(SET_VO_HOLD_3S));
+  if (g_radar_kind == RADAR_ME73) {
+    LOGI("[CFG] VO hold = 3000 ms");
+    radar_send(SET_VO_HOLD_3S, sizeof(SET_VO_HOLD_3S));
 
-  LOGI("[CFG] Presence max = %u cm", (unsigned)sg_core_get_range_cm());
-  radar_set_presence_max(sg_core_get_range_cm());
+    LOGI("[CFG] Presence max = %u cm", (unsigned)sg_core_get_range_cm());
+    radar_set_presence_max(sg_core_get_range_cm());
 
-  LOGI("[CFG] Save all");
-  radar_send(SAVE_ALL, sizeof(SAVE_ALL));
+    LOGI("[CFG] Save all");
+    radar_send(SAVE_ALL, sizeof(SAVE_ALL));
+  } else if (g_radar_kind == RADAR_LD2410C) {
+    LOGI("[CFG] LD2410C boot config");
+    radar_set_presence_max(sg_core_get_range_cm());
+  }
 
   g_after_cfg_ms = millis() + 1000; // 1s
 }
@@ -212,8 +285,10 @@ static void cli_help(Print& out) {
 static void cli_info(Print& out) {
   out.print(F("UART1 RX=")); out.print(SG_RADAR_RX);
   out.print(F(" TX=")); out.print(SG_RADAR_TX);
-  out.print(F(" @")); out.println(SG_RADAR_BAUD);
+  uint32_t baud = g_uart.baud ? g_uart.baud : (uint32_t)SG_RADAR_BAUD;
+  out.print(F(" @")); out.println(baud);
   out.print(F("OCC pin=")); out.println(SG_PIN_RADAR_OCC);
+  out.print(F("Radar=")); out.println(radar_kind_str(g_radar_kind));
   out.print(F("Range (max presence)=")); out.print(sg_core_get_range_cm()); out.println(F(" cm"));
 }
 
@@ -522,20 +597,38 @@ static void on_cli_calib(int argc, char* argv[], Print& out) {
 }
 
 static void radar_set_presence_max(uint16_t cm) {
-  uint8_t frame[10];
-  frame[0] = 0x55;
-  frame[1] = 0x5A;
-  frame[2] = 0x00;
-  frame[3] = 0x06; // LEN (FUNC..SUM) = 6 bytes
-  frame[4] = 0x01;
-  frame[5] = 0x80;
-  frame[6] = 0x0E;
-  frame[7] = (uint8_t)((cm >> 8) & 0xFF);
-  frame[8] = (uint8_t)(cm & 0xFF);
-  uint8_t sum = (uint8_t)((frame[4] + frame[5] + frame[6] + frame[7] + frame[8]) & 0xFF); // checksum legacy do vendor
-  frame[9] = sum;
-  LOGI("[CFG] Presence max = %u cm (sum=0x%02X)", (unsigned)cm, (unsigned)sum);
-  radar_send(frame, sizeof(frame));
+  if (g_radar_kind == RADAR_ME73) {
+    uint8_t frame[10];
+    frame[0] = 0x55;
+    frame[1] = 0x5A;
+    frame[2] = 0x00;
+    frame[3] = 0x06; // LEN (FUNC..SUM) = 6 bytes
+    frame[4] = 0x01;
+    frame[5] = 0x80;
+    frame[6] = 0x0E;
+    frame[7] = (uint8_t)((cm >> 8) & 0xFF);
+    frame[8] = (uint8_t)(cm & 0xFF);
+    uint8_t sum = (uint8_t)((frame[4] + frame[5] + frame[6] + frame[7] + frame[8]) & 0xFF); // vendor checksum
+    frame[9] = sum;
+    LOGI("[CFG] Presence max = %u cm (sum=0x%02X)", (unsigned)cm, (unsigned)sum);
+    radar_send(frame, sizeof(frame));
+    return;
+  }
+
+  if (g_radar_kind == RADAR_LD2410C) {
+    uint16_t gate = (uint16_t)((cm + (LD2410C_GATE_CM - 1)) / LD2410C_GATE_CM);
+    if (gate < 2) gate = 2;
+    if (gate > 8) gate = 8;
+    LOGI("[CFG] LD2410C max gate = %u (cm=%u)", (unsigned)gate, (unsigned)cm);
+    if (!ld2410c_cmd_enable(&g_uart)) LOGW("[CFG] LD2410C enable cmd failed");
+    delay(20);
+    if (!ld2410c_cmd_set_max_gates(&g_uart, (uint8_t)gate, (uint8_t)gate, LD2410C_NO_ONE_S)) {
+      LOGW("[CFG] LD2410C set max gates failed");
+    }
+    delay(20);
+    if (!ld2410c_cmd_end(&g_uart)) LOGW("[CFG] LD2410C end cmd failed");
+    uart_drain_rx(&g_uart, 50);
+  }
 }
 
 static void on_range_applied(uint16_t cm) {
@@ -569,12 +662,10 @@ void setup() {
 
   pinMode(SG_PIN_RADAR_OCC, INPUT_PULLDOWN);
 
-  if (!uart_begin(&g_uart, /*uart*/1, SG_RADAR_BAUD, /*RX*/SG_RADAR_RX, /*TX*/SG_RADAR_TX)) {
-    LOGE("[ERR] uart_begin failed");
+  if (!radar_autodetect()) {
+    LOGE("[ERR] radar autodetect failed");
   }
-  if (!sg_radar_begin(&g_radar, &g_uart)) {
-    LOGE("[ERR] radar_begin failed");
-  }
+  LOGI("[RADAR] %s @%lu", radar_kind_str(g_radar_kind), (unsigned long)g_uart.baud);
 
   ring_init(&g_ring, g_samples, 256);
   SgCoreConfig core_cfg;
@@ -587,7 +678,7 @@ void setup() {
 
   Serial.println();
   LOGI("[BOOT] SenseGrid + Pipeline + CLI");
-  Serial.printf("[UART1] RX=%d TX=%d @%lu\n", SG_RADAR_RX, SG_RADAR_TX, (unsigned long)SG_RADAR_BAUD);
+  Serial.printf("[UART1] RX=%d TX=%d @%lu\n", SG_RADAR_RX, SG_RADAR_TX, (unsigned long)g_uart.baud);
   Serial.printf("[OCC] pin=%d\n", SG_PIN_RADAR_OCC);
 
   radar_config_boot();
@@ -624,9 +715,10 @@ void loop() {
   // 2) pular leituras durante warm-up
   if (millis() >= g_after_cfg_ms) {
     // tenta até 3 frames por loop
+    uint32_t read_timeout = (g_radar_kind == RADAR_LD2410C) ? 80 : 20;
     for (int i = 0; i < 3; ++i) {
       RadarParsed p;
-      if (!sg_radar_read_parsed(&g_radar, &p, /*timeout_ms*/20)) break;
+      if (!sg_radar_read_parsed(&g_radar, &p, read_timeout)) break;
 
       g_last = p;
       g_has_last = true;
