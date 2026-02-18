@@ -81,6 +81,21 @@
       "dependsOn": ["Arduino (portable): Update Index"]
     },
     {
+      "label": "Arduino (portable): Prune Toolchain (optional)",
+      "detail": "Remove tools nao usados pelo ESP32-C3 (reduz espaco em disco).",
+      "type": "shell",
+      "options": { "cwd": "${workspaceFolder}" },
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}\\tools\\prune_toolchain.ps1"
+      ],
+      "problemMatcher": []
+    },
+    {
       "label": "Arduino (portable): Build + Export (bin/elf)",
       "type": "shell",
       "options": { "cwd": "${workspaceFolder}" },

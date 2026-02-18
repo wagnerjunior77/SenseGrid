@@ -28,5 +28,6 @@
     "--query-driver=C:\\Users\\WJR\\.espressif\\tools\\riscv32-esp-elf\\esp-14.2.0_20241119\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
     "--compile-commands-dir=c:\\Users\\WJR\\Desktop\\Dyona\\sensegrid-fw\\build"
   ],
-  "idf.portWin": "COM5"
+  "idf.portWin": "COM5",
+  "idf.currentSetup": "C:\\Users\\WJR\\esp\\v5.5.1\\esp-idf"
 }
