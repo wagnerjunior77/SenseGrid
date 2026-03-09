@@ -1,198 +1,162 @@
-# SenseGrid — Firmware de Ocupação por Radar (ESP32-C3 + ME73MS01)
+﻿# SenseGrid Firmware (ESP32-C3 + Multi-Radar)
 
-Sistema de **detecção de presença/ocupação** usando um módulo de radar mmWave da família **ME73MS01** conectado a um **ESP32-C3**.  
-O firmware fornece:
-- **Estados de presença** (`none`, `exist`, `move`)
-- **Distância estimada**, **SNR** e **intensidade de sinal**
-- **Streaming em JSON** via Serial para depuração e coleta de dados
-- **CLI de diagnóstico** (help, info, stream on/off, rate, json, range)
+Firmware de presenca/ocupacao para ESP32-C3 com arquitetura modular.
+O projeto suporta mais de um radar via interface comum (`SgRadarOps`).
 
-> **Use cases**: contador de presença em cômodos, “ocupado/livre” de ambientes, automação residencial, análise de ocupação em tempo real.
+## Estado atual
 
----
+- Fase: Atividade 8 (testes multiambiente A/B sem PIR)
+- Observabilidade concluida: KPI, endpoints de diagnostico, logger `.jsonl`, dashboard
+- Build oficial: Arduino CLI portable via Tasks do VS Code
 
-## Placa, fiação e energia
+## Sensores suportados
 
-### Board
-- **Alvo**: ESP32-C3 (ex.: *ESP32-C3 DevKitM-1* / “Generic ESP32-C3” no Arduino)
-- **Core Arduino**: `esp32:esp32@3.3.2`
+- ME73MS01 (`components/drivers/drv_radar_me73.*`)
+- LD2410C (`components/drivers/drv_radar_ld2410c.*`)
 
-### Radar (ME73MS01 — família)
-- Interface **UART** (3V3) + saída digital de **OCC** (ocupação).
-- **Alimentação**: **verifique o seu módulo**. Existem variantes que aceitam 5 V e outras 3V3.  
-  No nosso setup de teste: ESP32-C3 alimentado via USB; o radar foi alimentado conforme a especificação do módulo (atenção à compatibilidade de níveis).
+No boot, o firmware tenta detectar automaticamente o driver em runtime (LD2410C e ME73).
 
-### Pinos (padrão do projeto)
-| Sinal         | ESP32-C3 | Observação                          |
-|---------------|----------|-------------------------------------|
-| UART1 RX      | **GPIO1**| Recebe do TX do radar               |
-| UART1 TX      | **GPIO3**| Envia para RX do radar              |
-| OCC (presença)| **GPIO4**| Entrada digital (pull-down interno) |
-| GND           | GND      | Referência comum                    |
-| VCC (radar)   | 3V3/5V*  | *Conforme sua versão do módulo      |
+## Guia rapido
 
-> **Atenção**: mantenha GND comum. **Não** conecte TX/RX sem GND compartilhado.
+### 1) Build oficial (Arduino CLI portable)
 
----
+Rode as Tasks na ordem abaixo (primeira vez no PC):
 
-## Build e Upload (Arduino CLI portátil incluso no repo)
+1. `Arduino (portable): Bootstrap CLI (1x)`
+2. `Arduino (portable): Configurar timeout (1x)`
+3. `Arduino (portable): Prefetch discovery tools`
+4. `Arduino (portable): Update Index`
+5. `Arduino (portable): Install Core (1x ou quando trocar versao)`
+6. `Arduino (portable): Build + Export (bin/elf)`
 
-Requisitos:
-- Windows + VS Code (Tasks já configuradas)
-- Nada global: usamos `toolchain/arduino-cli.exe` e `toolchain/arduino-cli.yaml` (portátil)
+Configuracao versionada em `.vscode/settings.json`:
 
-### Passo a passo (VS Code → Terminal → “Run Task…”)
+- `sensegrid.fqbn = esp32:esp32:esp32c3`
+- `sensegrid.coreVersion = 3.3.2`
+- `sensegrid.serialPort = AUTO`
 
-1. **Arduino (portable): Ensure CP210x driver (Win) [1x]**  
-   Instala o driver CP210x incluido em `driver/` via `pnputil` (pode pedir admin). As tasks de Upload/Monitor ja dependem dela.
+Saida esperada: `toolchain/build/SenseGrid/`.
 
-2. **Arduino (portable): Bootstrap CLI (1x)**  
-   Baixa/garante o `arduino-cli.exe` em `toolchain/`.
+### 2) Upload e monitor
 
-3. **Arduino (portable): Configurar timeout (1x)**  
-   Seta `network.connection_timeout=1200s` no YAML do repo.
+1. `Arduino (portable): Ensure CP210x driver (Win)` (se a COM nao aparecer)
+2. `Arduino (portable): Upload (from exported binaries)`
+3. `Arduino (portable): Monitor`
 
-4. **Arduino (portable): Prefetch discovery tools**  
-   Coloca o `mdns-discovery` (Windows) em cache local antes do update-index.
+As tasks de Upload/Monitor usam scripts com auto-detect de porta:
 
-5. **Arduino (portable): Update Index**
+- porta `AUTO` por default
+- override por `SENSEGRID_PORT`
+- tenta filtrar por FQBN
+- se houver mais de uma porta, prioriza CP210x (VID `0x10C4`)
 
-6. **Arduino (portable): Install Core (1x ou quando trocar versao)**  
-   Instala `esp32:esp32@3.3.2`.
+## Referencia completa de tasks
 
-7. **Arduino (portable): Build + Export (bin/elf)**  
-   Gera artefatos em `toolchain/build/SenseGrid/`:
-   - `SenseGrid.ino.bin`, `SenseGrid.ino.elf` (e demais imagens quando aplicavel)
+### Setup e toolchain
 
-8. **Arduino (portable): Upload (from exported binaries)**  
-   Faz o flash usando os binarios exportados.  
-   > Porta auto-detectada por padrao. Para fixar, use `settings.json` ou `SENSEGRID_PORT`.
+- `Arduino (portable): Bootstrap CLI (1x)`
+Baixa/garante `toolchain/arduino-cli.exe`.
 
-9. **Arduino (portable): Monitor**  
-   Abre o serial monitor a **115200**.
+- `Arduino (portable): Configurar timeout (1x)`
+Define `network.connection_timeout=1200s` em `toolchain/arduino-cli.yaml`.
 
-### Configurações do workspace (já no repo)
+- `Arduino (portable): Prefetch discovery tools`
+Preenche cache de discovery (evita travar no `update-index`).
 
-`settings.json` (trecho relevante):
-```json
-{
-  "sensegrid.fqbn": "esp32:esp32:esp32c3",
-  "sensegrid.serialPort": "AUTO",
-  "sensegrid.coreVersion": "3.3.2"
-}
-```
+- `Arduino (portable): Update Index`
+Atualiza indice de cores do Arduino CLI.
 
----
+- `Arduino (portable): Install Core (1x ou quando trocar versao)`
+Instala `esp32:esp32@${config:sensegrid.coreVersion}`.
 
-## CLI rápida (diagnóstico)
+- `Arduino (portable): Prune Toolchain (optional)`
+Remove ferramentas nao usadas pelo ESP32-C3 (`esp-x32`, `xtensa-esp-elf-gdb`, `esp-xs2`, `esp-xs3`) para reduzir uso de disco.
 
-Digite comandos no Serial (115200). Exemplos:
+### Build e deploy
+
+- `Arduino (portable): Build + Export (bin/elf)`
+Compila e exporta artefatos para `toolchain/build/SenseGrid/`.
+
+- `Arduino (portable): Ensure CP210x driver (Win)`
+Instala driver USB-UART CP210x pelo pacote local.
+
+- `Arduino (portable): Upload (from exported binaries)`
+Faz flash usando `toolchain/upload-arduino.ps1` (com auto-detect de porta).
+
+- `Arduino (portable): Monitor`
+Abre serial monitor via `toolchain/monitor-arduino.ps1` (com auto-detect de porta).
+
+### Tasks legadas
+
+- `ESP-IDF (legacy): Build`
+- `ESP-IDF (legacy): Flash`
+
+Sao placeholders. O fluxo oficial deste repo e Arduino portable.
+
+## CLI (serial)
 
 ```text
 help
 info
-stream on         # começa a imprimir JSON contínuo
-stream off
-json on           # força formato JSON (ao invés de logs humanos)
-json off
-rate 100          # 100 ms entre amostras (~10 Hz)
-log info          # níveis: error, warn, info, debug
-range 200         # limite de distância do radar em cm (ex.: 200 = 2 m)
-wifi show          # status STA/AP
-wifi set <ssid> <pass>
-wifi ap <ssid> [pass]
-wifi clear [sta|ap|all]
-wifi apply
+stream on|off
+rate <ms>
+json on|off
+log error|warn|info|debug
+pipe show
+pipe set <key> <value>
+range <cm|2|4|6>
+calib start|status|apply|reset
+raw on|off|once
+mqtt show|host <ip>|port <n>|restart
+wifi show|set <ssid> <pass>|ap <ssid> [pass]|clear [sta|ap|all]|apply
 ```
 
-## Provisionamento de rede
+## Endpoints HTTP
 
-- Se nao houver STA configurado, o firmware sobe um AP aberto "SenseGrid-Setup-XXXX".
-- Acesse http://192.168.4.1/ ou http://192.168.4.1/setup para configurar SSID/senha.
-- Endpoint HTTP:
-  - GET /v1/net
-  - POST /v1/net (JSON: {"sta_ssid":"...","sta_pass":"...","ap_ssid":"...","ap_pass":"...","clear":true})
+- `GET /v1/meas`
+- `GET /v1/kpi`
+- `GET /v1/diagnostics/status`
+- `GET /v1/diagnostics/kpi`
+- `GET /v1/diagnostics/export` (jsonl)
+- `GET /diagnostics` (UI local)
+- `GET /v1/info`
+- `GET /v1/net`
+- `POST /v1/net`
+- `GET /v1/pipe`
+- `GET /v1/occupancy`
+- `GET /v1/tracks`
+- `GET /v1/health`
 
+## MQTT (resumo)
 
-> Dica: `stream on` + `json on` é o combo para gravar dados com um script no PC.
+Publica telemetria/KPI no padrao SmartPlaces (`sp<sb_ref>/<device_id>/...`).
+Comandos de ajuste entram por topico de comando (`.../c`) e sao processados em `sketch/SenseGrid/mqtt_service.cpp`.
 
----
+## Coleta de dados
 
-## Exemplo de saida JSON (real)
+- Sessao serial: `python tools/serial_logger.py -p COM5 -b 115200 -o logs/session.jsonl`
+- Captura A/B: `python tools/ab_capture.py -p COM5 -b 115200 -d 120 -o logs/ab`
 
-```json
-{"ts_ms":147932,"status":"move","dist_m":0.730,"speed_mps":0.000,"snr":1.000,"distance_cm":73,"speed_cms":0,"signal":310,"az_deg":0,"el_deg":0}
-{"ts_ms":148282,"status":"exist","dist_m":0.280,"speed_mps":0.000,"snr":1.000,"distance_cm":28,"speed_cms":0,"signal":1685,"az_deg":0,"el_deg":0}
-{"ts_ms":42210,"status":"none","dist_m":0.000,"speed_mps":0.000,"snr":0.000,"distance_cm":0,"speed_cms":0,"signal":0,"az_deg":0,"el_deg":0}
-```
+## Estrutura do codigo
 
-Campos:
-- **status**: `none` (vazio), `exist` (presenca estatica), `move` (movimento)
-- **dist_m / distance_cm**: distancia estimada
-- **speed_mps / speed_cms**: velocidade (quando disponivel)
-- **snr**: razao sinal-ruido normalizada (0-1)
-- **signal**: intensidade bruta do fabricante
-- **az_deg / el_deg**: angulos do alvo (quando disponivel)
+Para onboarding tecnico e navegacao do repositorio:
 
----
+- [docs/repository_structure.md](docs/repository_structure.md)
 
-## Range (limite de distância)
+## Regras de arquitetura
 
-- O firmware aplica um **limite de presença** (ex.: **2 m → `range 200`**).  
-- Para testar outros valores em runtime: `range <cm>` (ex.: `range 500` ≈ 5 m).
-- A configuração enviada no boot também define **VO hold** (ex.: 3 s) e o limite de presença.
+- Core nao conhece endpoint.
+- Drivers acessam HW (UART/GPIO).
+- Parser converte bytes em medidas.
+- Adapters/services fazem IO externo (HTTP/MQTT/log/rede).
 
-> Observação: a persistência de ajustes depende do comando “save” do módulo. O boot já envia um “salvar tudo” após aplicar os parâmetros padrão do projeto.
+Referencia operacional para agentes e contribuidores:
 
----
+- [AGENTS.md](AGENTS.md)
 
-## Detecção v1
+## Troubleshooting rapido
 
-Pipeline de presença/movimento com gate de distǽncia/SNR, baseline EMA e holds.
-
-- **Ligando stream JSON**: `stream on`, `json on` (por padrão já iniciam ativos para logging).
-- **Range (HW + pipeline)**: `range 2|4|6` (ou `pipe set dist_max 200|400|600`). Fora do range, o stream Ǹ silenciado.
-- **Tuning rápido**:
-  - Reduzir falsos positivos longe: `pipe set dist_max 200` e subir `snr_min` / `delta_exist`.
-  - Detectar presença sutil: baixar `snr_min` / `delta_exist` e subir `hold_exist`.
-  - Motion demais: subir `snr_move` e `speed_thr`.
-- **Dump de parâmetros**: `pipe show` (log/grava NVS).
-- Detalhes (state machine, fórmulas, playbook) em `docs/pipeline_v1.md`.
-
-## Coleta de dados no PC (JSONL)
-
-Use o script `tools/serial_logger.py` para salvar JSONL contínuo.  
-Exemplo de uso:
-```bash
-python tools/serial_logger.py --port COM5 --baud 115200 --out logs/session.jsonl
-```
-
----
-
-## Estrutura do repo (essencial)
-
-```
-/components
-  /cli
-  /drivers
-  /hal
-  /util
-/docs
-  diagnostico.md
-  radar_proto.md
-/logs
-/sketch
-  /SenseGrid
-    SenseGrid.ino
-/toolchain
-  arduino-cli.exe
-  arduino-cli.yaml
-  build-arduino.ps1
-  ...
-README.md
-```
-
----
-
-## Licença
-Definir conforme necessidade do projeto (ex.: MIT). Créditos ao time SenseGrid e à Dyona (contexto do projeto).
+- Erro de include em `glue/*`: confira `toolchain/build-arduino.ps1` e `toolchain/include-dirs.txt` atualizados.
+- Sem porta serial: rode `Ensure CP210x driver`, ou force com `SENSEGRID_PORT`.
+- Build pesado em disco: rode `Prune Toolchain (optional)` e limpe `toolchain/build/`.
+- Checksum invalido: revisar GND comum, baud e cabos UART.

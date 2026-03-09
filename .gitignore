@@ -43,6 +43,9 @@ toolchain/build/
 
 instructions.md
 
+# ---- Documentos locais (nao versionar)
+docs/finalizacao_projeto_local.md
+
 # ---- Lixos gerais
 .idea/
 .DS_Store
